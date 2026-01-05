@@ -28,8 +28,11 @@ class Mok2020UnifiedPipeline(BasePipeline):
     - Single adjacent_bases output (same for all variants)
     """
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self,
+        min_window_size,
+        max_window_size,
+    ):
+        super().__init__(min_window_size,max_window_size)
         self.pipeline_name = "Mok2020_Unified"
 
     def _get_g1397_position_range(self, window_size):
@@ -64,7 +67,7 @@ class Mok2020UnifiedPipeline(BasePipeline):
         ]
         
         for strategy_name, position_range_func in strategies:
-            for window_size in range(14, 21):
+            for window_size in range(self.min_window_size, self.max_window_size):
                 position_range = position_range_func(window_size)
                 
                 for target_pos in position_range:
@@ -89,7 +92,10 @@ class Mok2020UnifiedPipeline(BasePipeline):
                         ref_base,                                # Reference base
                         mut_base,                                # Mutant base
                         f"{window_size}bp",                      # Window size
-                        window,                                  # Window sequence
+                        self._mark_bases(
+                            window,pos - start_pos+1,
+                            [(pos - start_pos+1) for pos in bystander_positions]
+                        ),  # Window sequence
                         f"Position {target_pos}",               # Target position in window
                         len(bystander_positions),               # Bystander count
                         bystander_positions,                    # Bystander positions
@@ -108,6 +114,21 @@ class Mok2020UnifiedPipeline(BasePipeline):
         nospace_mtDNA = self._capitalize(self._remove_whitespace(mtDNA_seq))
         
         # Find all context positions (from all variants)
+        C_CONTEXT = ["TC","AC","CC"]
+        G_CONTEXT = ["GA","GT","GG"]
+
+        C_context_positions = self._find_dinucs(nospace_mtDNA, C_CONTEXT, 'C',2)
+        G_context_positions = self._find_dinucs(nospace_mtDNA, G_CONTEXT, 'G',1)
+        logger.info(f"C_context_positions:{C_context_positions}")
+        logger.info(f"G_context_positions:{G_context_positions}")
+        if pos in C_context_positions:
+            logger.info(f"Base at position {pos} is in a 5'-{nospace_mtDNA[pos-1:pos+1]} context.")
+            return self._process_context_all_variants(nospace_mtDNA, pos, C_context_positions+G_context_positions, 'C', 'T', "C→T (TC context)")
+
+        if pos in G_context_positions:
+            logger.info(f"Base at position {pos} is in a 5'-{nospace_mtDNA[pos-1:pos+1]} context.")
+            return self._process_context_all_variants(nospace_mtDNA, pos, C_context_positions+G_context_positions, 'G', 'A', f"G→A (5'-{nospace_mtDNA[pos-1:pos+1]} context)")
+
         consecutive_TC_positions = self._find_consecutive_TC_sequences(nospace_mtDNA)
         consecutive_AC_positions = self._find_consecutive_AC_sequences(nospace_mtDNA)
         consecutive_CC_positions = self._find_consecutive_CC_sequences(nospace_mtDNA)

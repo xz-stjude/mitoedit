@@ -61,7 +61,7 @@ class NoCacheStaticFiles(StaticFiles):
 app.mount("/final_output", NoCacheStaticFiles(directory="final_output"), name="final_output")
 
 # Setup templates
-templates = Jinja2Templates(directory="web/templates")
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
 # Middleware to redirect HTTP to HTTPS when SSL is enabled
 @app.middleware("http")
@@ -184,7 +184,7 @@ async def analyze_sequence(
         else:
             logger.info("Using default mtDNA file")
             # Get content from default mtDNA file
-            default_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'inputs', 'mito.txt')
+            default_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'mito.txt')
             logger.info(f"Reading default mtDNA file: {default_file}")
             
             if not os.path.exists(default_file):
@@ -224,7 +224,7 @@ async def analyze_sequence(
         try:
             logger.info(f"Starting analysis with position={position}, ref={reference_base}, mut={mutant_base}")
             # Define output file path
-            output_file = f'final_output/final_{position}.xlsx'
+            output_prefix = f'final_output/'
             
             # Override sys.argv with our parameters
             if sequence_file and sequence_file.filename:
@@ -232,18 +232,18 @@ async def analyze_sequence(
                 args = [
                     'mitoedit',
                     '--input_file', input_file,
-                    '--output', output_file,
+                    '--output_prefix', output_prefix,
+                    '--write_excel',
                     str(position),
-                    reference_base.upper(),
                     mutant_base.upper()
                 ]
             else:
                 # If using default mtDNA file, don't include --input_file parameter
                 args = [
                     'mitoedit',
-                    '--output', output_file,
+                    '--output_prefix', output_prefix,
+                    '--write_excel',
                     str(position),
-                    reference_base.upper(),
                     mutant_base.upper()
                 ]
             logger.info(f"Running mitoedit with args: {args}")
@@ -279,13 +279,13 @@ async def analyze_sequence(
             raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
 
         # Get the results file path
-        results_file = f'final_output/final_{position}.xlsx'
+        results_file = f'final_output/final_{position}_{mutant_base}.xlsx'
         
         if os.path.exists(results_file):
             response = JSONResponse(content={
                 "status": "success",
                 "results_file": results_file,
-                "filename": f"final_{position}.xlsx"
+                "filename": f"final_{position}_{mutant_base}.xlsx"
             })
             # Add cache control headers
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"

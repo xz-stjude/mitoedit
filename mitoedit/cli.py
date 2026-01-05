@@ -13,8 +13,6 @@ MIN_SPACER = 14
 MAX_SPACER = 18
 ARR_MIN = 14
 ARR_MAX = 18
-FILTER = 1
-CUT_POS = 31
 
 
 def main():
@@ -31,10 +29,9 @@ def main():
     parser.add_argument('--max_spacer'          , type=int, default=MAX_SPACER, help=f'Maximum spacer length for TALE-NT (default: {MAX_SPACER})')
     parser.add_argument('--array_min'           , type=int, default=ARR_MIN,    help=f'Minimum array length for TALE-NT (default: {ARR_MIN})')
     parser.add_argument('--array_max'           , type=int, default=ARR_MAX,    help=f'Maximum array length for TALE-NT (default: {ARR_MAX})')
-    parser.add_argument('--filter'              , type=int, default=FILTER,     help=f'TALE-NT filter setting (default: {FILTER})')
-    parser.add_argument('--cut_pos'             , type=int, default=CUT_POS,    help=f'TALE-NT cut position (default: {CUT_POS})')
     parser.add_argument('position'              , type=int,                     help='Position of the base to be changed')
     parser.add_argument('mutant_base'           , type=str,                     help='Mutant base to be changed into')
+    parser.add_argument('--write_excel'           , action="store_true",          help='Save windows and bystander effects in spreadsheeets of an excel file (final_{position}_{mutant base})')
     # yapf: enable
     args = parser.parse_args()
 
@@ -59,20 +56,18 @@ def main():
         else:
             logger.warning(f"Bystander file {bystander_file} does not exist. Skipping bystander information.")
 
-    tale_nt_params = {
+    talen_params = {
         'min_spacer': args.min_spacer,
         'max_spacer': args.max_spacer,
         'array_min': args.array_min,
         'array_max': args.array_max,
-        'filter': args.filter,
-        'cut_pos': args.cut_pos
     }
 
     results = process_mitoedit(mtdna_seq=mtdna_seq,
                                position=args.position,
                                mutant_base=args.mutant_base,
                                bystander_df=bystander_df,
-                               tale_nt_params=tale_nt_params)
+                               talen_params=talen_params)
 
     if results['windows_df'].empty:
         logger.warning("No results generated. Exiting.")
@@ -101,19 +96,27 @@ def main():
 
     combined_windows_csv = f'{args.output_prefix}/all_windows.csv'
     combined_bystanders_csv = f'{args.output_prefix}/all_bystanders.csv'
+    if args.write_excel:
 
+        combined_excel =  f'{args.output_prefix}/final_{args.position}_{args.mutant_base}.xlsx'
+        excel_writer = pd.ExcelWriter(combined_excel, engine = 'xlsxwriter')
     logger.info(f"Saving combined windows data to {combined_windows_csv}.")
     results['windows_df'].to_csv(combined_windows_csv, index=False)
+    if args.write_excel:
+        results['windows_df'].to_excel(excel_writer, sheet_name = "all_windows", index=False)
 
     if not results['bystanders_df'].empty:
         logger.info(f"Saving combined bystanders data to {combined_bystanders_csv}.")
         results['bystanders_df'].to_csv(combined_bystanders_csv, index=False)
+        if args.write_excel: results['bystanders_df'].to_excel(excel_writer, sheet_name = "bystanders_effects", index=False)
     else:
         logger.info("No combined bystanders data to save.")
+        
 
     if not results['talen_output_df'].empty:
-        talen_output_path = f'{args.output_prefix}/talen_output.txt'
-        logger.info(f"Saving TALE-NT output to {talen_output_path}.")
-        results['talen_output_df'].to_csv(talen_output_path, sep='\t', index=False)
-
+        talen_output_path = f'{args.output_prefix}/talen_output.csv'
+        logger.info(f"Saving talen output to {talen_output_path}.")
+        results['talen_output_df'].to_csv(talen_output_path, index=False)
+        if args.write_excel: results['talen_output_df'].to_excel(excel_writer, sheet_name = "talen_output", index=False)
+    if args.write_excel: excel_writer.close()
     logger.info("MitoEdit processing completed successfully.")

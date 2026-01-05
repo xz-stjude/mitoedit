@@ -2,7 +2,12 @@ import logging
 logger = logging.getLogger(__name__)
 from .base_pipeline import BasePipeline
 
-
+WINDOW_SIZE_MIN=14
+WINDOW_SIZE_MAX=19
+ADJACENT_BASES_LEFT_LEN=(16 + 15)
+ADJACENT_BASES_RIGHT_LEN=(15 + 15)
+MIN_LEFT_GAP=4
+MIN_RIGHT_GAP=5
 class ChosTALEDsPipeline(BasePipeline):
     """
     Cho sTALED Base Editing Pipeline (T→C and A→G edits)
@@ -54,23 +59,21 @@ class ChosTALEDsPipeline(BasePipeline):
         logger.info(f"Processing mtDNA sequence for position {pos}.")
 
         nospace_mtDNA = self._capitalize(self._remove_whitespace(mtDNA_seq))
-        T_positions = []
-        A_positions = []
-        # list to store positions where 'T' is present in the mtDNA sequence
-        all_T_positions = self._find_consecutive_CT_sequences(nospace_mtDNA) + self._find_consecutive_GT_sequences(nospace_mtDNA) + self._find_consecutive_TG_sequences(nospace_mtDNA) + self._find_consecutive_TC_sequences(nospace_mtDNA)
-        [T_positions.append(x) for x in all_T_positions if x not in T_positions]
-        # list to store positions where 'A' is present in the mtDNA sequence
-        all_A_positions = self._find_consecutive_AC_sequences(nospace_mtDNA) + self._find_consecutive_AG_sequences(nospace_mtDNA) + self._find_consecutive_CA_sequences(nospace_mtDNA) + self._find_consecutive_GA_sequences(nospace_mtDNA)
-        [A_positions.append(x) for x in all_A_positions if x not in A_positions]
+
+        # list to store positions where 'T' is present in the mtDNA sequence in CT/GT/TG/TC contexts
+        T_positions = self._find_dinucs(nospace_mtDNA, ['CT', 'GT', 'TG', 'TC'],'T')
+        # list to store positions where 'A' is present in the mtDNA sequence in CA/GA/AG/AC contexts
+        A_positions = self._find_dinucs(nospace_mtDNA, ['CA', 'GA', 'AG', 'AC'],'A')
         dummy = 0
 
         if pos in T_positions:
             ref, mut, all_windows,dum = 'T', 'C',[],[]
             circular_seq = nospace_mtDNA + nospace_mtDNA
-            start_index = pos - (16 + 15)
-            end_index = pos + (15 + 15)
+            start_index = pos - ADJACENT_BASES_LEFT_LEN
+            end_index = pos + ADJACENT_BASES_RIGHT_LEN
             adjacent_bases = circular_seq[start_index:end_index]
-            marked_adjacent = self._mark_bases(adjacent_bases, 31, self._find_consecutive_GA_sequences(adjacent_bases) + self._find_consecutive_TC_sequences(adjacent_bases) + self._find_consecutive_AC_sequences(adjacent_bases) + self._find_consecutive_AG_sequences(adjacent_bases) + self._find_consecutive_CA_sequences(adjacent_bases) + self._find_consecutive_CT_sequences(adjacent_bases) + self._find_consecutive_GT_sequences(adjacent_bases) + self._find_consecutive_TG_sequences(adjacent_bases))
+            T_positions_adj = self._find_dinucs(adjacent_bases, ['CT', 'GT', 'TG', 'TC'],'T')
+            A_positions_adj = self._find_dinucs(adjacent_bases, ['CA', 'GA', 'AG', 'AC'],'A')
             #logger.info("The 60 adjacent bases to my target base are:", marked_adjacent)
             left_adjacent_bases = adjacent_bases[:30] #(base 0 to 29)
             right_adjacent_bases = adjacent_bases[31:] #(base 31 to 59)
@@ -89,19 +92,21 @@ class ChosTALEDsPipeline(BasePipeline):
                 FLAG=True
             if left_adjacent_bases[-1] =='A':
                 FLAG=True
-            for window_source in ["sTALED with AD on the right_TALE", "sTALED with AD on the left_TALE"]:
-                for window_size in range(14, 19): #for window sizes of 14-18bp long --> MAJOR ASSUMPTION!!
+            for window_source in ["sTALED with AD on the left_TALE", "sTALED with AD on the right_TALE"]:
+                for window_size in range(WINDOW_SIZE_MIN, WINDOW_SIZE_MAX): #for window sizes of 14-18bp long --> MAJOR ASSUMPTION!!
                     if window_source == "sTALED with AD on the left_TALE":
                         sTALED_left_T_windows = self._generate_windows_from_right_sTALED(circular_seq, pos, window_size) #generating the TC windows(14bp-18bp)
                         TALES=False
-                        for num, window in enumerate(sTALED_left_T_windows, start=5):
-                            window_desc = f"Position {num} from the 5' end"
+                        for rel_pos, window in enumerate(sTALED_left_T_windows, start=5):
+                            # rel_pos is the position of target realive to the window
+                            window_desc = f"Position {rel_pos} from the 5' end"
                             ws = f"{window_size}bp"
-                            #off_target_sites_set = count_TC_sequences(window[4:13]) | count_GA_sequences(window[3:12]) | count_AC_sequences(window[4:13]) | count_AG_sequences(window[4:13]) | count_CA_sequences(window[3:12]) | count_CT_sequences(window[3:12]) | count_GT_sequences(window[3:12]) | count_TG_sequences(window[4:13]) #finds the off-target sites in each window
-                            #if dummy:
-                            #    off_target_sites_set.add(dummy)
-                            marked_window = self._mark_bases(window, num, [(x + 3) for x in self._find_consecutive_GA_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_AC_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_AG_sequences(window[4:13])] + [(x + 3) for x in self._find_consecutive_CA_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_CT_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_GT_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_TG_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_TC_sequences(window[4:13])])
-                            off_target_sites = marked_window.count('{') + dummy #because the original counting method was including the duplicate values in case of multiple contextss --> so now im counting on basis of number of '{' after marking the windows
+                            # marked_window = self._mark_bases(window, rel_pos, [(x + 3) for x in self._find_consecutive_GA_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_AC_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_AG_sequences(window[4:13])] + [(x + 3) for x in self._find_consecutive_CA_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_CT_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_GT_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_TG_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_TC_sequences(window[4:13])])
+                            bystander_positions = [bystander_pos - ADJACENT_BASES_LEFT_LEN + rel_pos  for bystander_pos in (T_positions_adj + A_positions_adj) if bystander_pos != pos]
+                            bystander_positions = [bystander_pos for bystander_pos in bystander_positions if bystander_pos > MIN_LEFT_GAP and bystander_pos <= window_size - MIN_RIGHT_GAP]
+                            marked_window = self._mark_bases(window, rel_pos, bystander_positions)
+                            print("left window",marked_window)
+                            off_target_sites = marked_window.count('{') + dummy
                             int_pos_end = marked_window.find(']')
                             int_pos_ini = marked_window.find('[')
                             #to deal with T on either sides of the --> so it can be present in any context
@@ -111,7 +116,7 @@ class ChosTALEDsPipeline(BasePipeline):
                                 final_window = self._mark_base_at_position(marked_window, int_pos_ini - 1)
                             else:
                                 final_window = marked_window
-                            start_position = pos -num + 1
+                            start_position = pos -rel_pos + 1
                             ac_positions = self._find_N_positions(window[4:13], start_position + 3 , 'AC')
                             tc_positions = self._find_N_positions(window[4:13], start_position + 3 , 'TC')
                             ag_positions = self._find_N_positions(window[4:13], start_position + 3 , 'AG')
@@ -124,22 +129,25 @@ class ChosTALEDsPipeline(BasePipeline):
                             ftg = ac_positions + ag_positions + ca_positions + ga_positions
                             ftg = [x for x in ftg if x != pos]
                             ftc = [x for x in ftc if x != pos]
-                            combined_set = set(ftc + ftg)
                             combined_set = set(ftc + ftg)  # Combine into a set
-                            sorted_combined = sorted(combined_set) if combined_set else []  # Sort if not empty, else return [0]
+                            sorted_combined = sorted(combined_set) if combined_set else []  # Sort if not empty, else return []
                             all_windows.append((self.pipeline_name, window_source, pos, ref, mut, ws, final_window, window_desc, off_target_sites, sorted_combined, TALES, FLAG))
     
                     elif window_source == "sTALED with AD on the right_TALE":
                         sTALED_right_T_windows = self._generate_windows_from_left_sTALED(circular_seq, pos, window_size) #generating the TC windows(14bp-18bp)
                         TALES=False
-                        for num, window in enumerate(sTALED_right_T_windows, start=5):
-                            window_desc = f"Position {num} from the 3' end"
+                        for rel_pos, window in enumerate(sTALED_right_T_windows, start=5):
+                            window_desc = f"Position {rel_pos} from the 3' end"
                             ws = f"{window_size}bp"
                             #off_target_sites_set = count_TC_sequences(window[-13:-4]) | count_GA_sequences(window[-13:-4]) | count_AC_sequences(window[-13:-4]) | count_AG_sequences(window[-13:-4]) | count_CA_sequences(window[-13:-4]) | count_CT_sequences(window[-13:-4]) | count_GT_sequences(window[-13:-4]) | count_TG_sequences(window[-13:-4]) #finds the off-target sites in each window
                             #if dummy:
                             #    off_target_sites_set.add(dummy)
                             #off_target_sites = len(off_target_sites_set)
-                            marked_window = self._mark_bases(window, window_size - num + 1, [(x + window_size - 12) for x in self._find_consecutive_AG_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_AC_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GA_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CA_sequences(window[-13:-4])] + [(x + window_size - 12) for x in self._find_consecutive_TC_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_TG_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GT_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CT_sequences(window[-13:-4])])
+                            # marked_window = self._mark_bases(window, window_size - rel_pos + 1, [(x + window_size - 12) for x in self._find_consecutive_AG_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_AC_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GA_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CA_sequences(window[-13:-4])] + [(x + window_size - 12) for x in self._find_consecutive_TC_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_TG_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GT_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CT_sequences(window[-13:-4])])
+                            bystander_positions = [bystander_pos - ADJACENT_BASES_LEFT_LEN + (window_size - rel_pos)  for bystander_pos in (T_positions_adj + A_positions_adj) if bystander_pos != pos]
+                            bystander_positions = [bystander_pos for bystander_pos in bystander_positions if bystander_pos > MIN_LEFT_GAP and bystander_pos <= window_size - MIN_RIGHT_GAP]
+                            marked_window = self._mark_bases(window, window_size - rel_pos, bystander_positions)
+                            print("right window",marked_window)
                             off_target_sites = marked_window.count('{') + dummy
                             int_pos_end = marked_window.find(']')
                             int_pos_ini = marked_window.find('[')
@@ -150,7 +158,7 @@ class ChosTALEDsPipeline(BasePipeline):
                                 final_window = self._mark_base_at_position(marked_window, int_pos_ini - 1)
                             else:
                                 final_window = marked_window
-                            start_position = pos - (window_size-num)
+                            start_position = pos - (window_size-rel_pos)
                             ac_positions = self._find_N_positions(window[-12:-3], start_position +window_size- 12 - 1, 'AC')
                             tc_positions = self._find_N_positions(window[-12:-3], start_position +window_size- 12 - 1, 'TC')
                             ag_positions = self._find_N_positions(window[-12:-3], start_position +window_size -12 - 1, 'AG')
@@ -175,7 +183,8 @@ class ChosTALEDsPipeline(BasePipeline):
             start_index = pos - (16 + 15)
             end_index = pos + (15 + 15)
             adjacent_bases = circular_seq[start_index:end_index]
-            marked_adjacent = self._mark_bases(adjacent_bases, 31, self._find_consecutive_GA_sequences(adjacent_bases) + self._find_consecutive_TC_sequences(adjacent_bases) + self._find_consecutive_AC_sequences(adjacent_bases) + self._find_consecutive_AG_sequences(adjacent_bases) + self._find_consecutive_CA_sequences(adjacent_bases) + self._find_consecutive_CT_sequences(adjacent_bases) + self._find_consecutive_GT_sequences(adjacent_bases) + self._find_consecutive_TG_sequences(adjacent_bases))
+            T_positions_adj = self._find_dinucs(adjacent_bases, ['CT', 'GT', 'TG', 'TC'],'T')
+            A_positions_adj = self._find_dinucs(adjacent_bases, ['CA', 'GA', 'AG', 'AC'],'A')
             left_adjacent_bases = adjacent_bases[:30] #(base 0 to 29)
             right_adjacent_bases = adjacent_bases[31:] #(base 31 to 59)
             logger.info(f"The left and right adjacent bases are: {left_adjacent_bases} and {right_adjacent_bases}")
@@ -198,11 +207,15 @@ class ChosTALEDsPipeline(BasePipeline):
                     if window_source == "sTALED with AD on the right_TALE":
                         sTALED_left_A_windows = self._generate_windows_from_left_sTALED(circular_seq, pos, window_size) #generating the A windows(14bp-18bp)
                         TALES=False
-                        for num, window in enumerate(sTALED_left_A_windows, start=5):
-                            window_desc = f"Position {num} from the 3' end"
+                        for rel_pos, window in enumerate(sTALED_left_A_windows, start=5):
+                            window_desc = f"Position {rel_pos} from the 3' end"
                             ws = f"{window_size}bp"
                             #off_target_sites = count_T_sequences(window[-13:-4]) + count_A_sequences(window[-13:-4])  #+dummy #finds the off-target sites in each window
-                            marked_window = self._mark_bases(window, window_size - num + 1, [(x + window_size - 12) for x in self._find_consecutive_AG_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_AC_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GA_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CA_sequences(window[-13:-4])] + [(x + window_size - 12) for x in self._find_consecutive_TC_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_TG_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GT_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CT_sequences(window[-13:-4])])
+                            # marked_window = self._mark_bases(window, window_size - rel_pos + 1, [(x + window_size - 12) for x in self._find_consecutive_AG_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_AC_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GA_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CA_sequences(window[-13:-4])] + [(x + window_size - 12) for x in self._find_consecutive_TC_sequences(window[-12:-3])] + [(x + window_size - 12) for x in self._find_consecutive_TG_sequences(window[-12:-3])] + [(x + window_size - 13) for x in self._find_consecutive_GT_sequences(window[-13:-4])] + [(x + window_size - 13) for x in self._find_consecutive_CT_sequences(window[-13:-4])])
+                            bystander_positions = [bystander_pos - ADJACENT_BASES_LEFT_LEN + (window_size - rel_pos)  for bystander_pos in (T_positions_adj + A_positions_adj) if bystander_pos != pos]
+                            bystander_positions = [bystander_pos for bystander_pos in bystander_positions if bystander_pos > MIN_LEFT_GAP and bystander_pos <= window_size - MIN_RIGHT_GAP]
+                            marked_window = self._mark_bases(window, window_size - rel_pos, bystander_positions)
+                            print("right window",marked_window)
                             off_target_sites = marked_window.count('{') + dummy
                             int_pos_end = marked_window.find(']')
                             int_pos_ini = marked_window.find('[')
@@ -213,7 +226,7 @@ class ChosTALEDsPipeline(BasePipeline):
                                 final_window = self._mark_base_at_position(marked_window, int_pos_ini - 1)
                             else:
                                 final_window = marked_window
-                            start_position = pos - (window_size-num)
+                            start_position = pos - (window_size-rel_pos)
                             ac_positions = self._find_N_positions(window[-12:-3], start_position +window_size- 12 - 1, 'AC')
                             tc_positions = self._find_N_positions(window[-12:-3], start_position +window_size- 12 - 1, 'TC')
                             ag_positions = self._find_N_positions(window[-12:-3], start_position +window_size -12 - 1, 'AG')
@@ -233,11 +246,14 @@ class ChosTALEDsPipeline(BasePipeline):
                     elif window_source == "sTALED with AD on the left_TALE":
                         sTALED_right_A_windows = self._generate_windows_from_right_sTALED(circular_seq, pos, window_size) #generating the A windows(14bp-18bp)
                         TALES=False
-                        for num, window in enumerate(sTALED_right_A_windows, start=5):
-                            window_desc = f"Position {num} from the 5' end"
+                        for rel_pos, window in enumerate(sTALED_right_A_windows, start=5):
+                            window_desc = f"Position {rel_pos} from the 5' end"
                             ws = f"{window_size}bp"
 
-                            marked_window = self._mark_bases(window, num, [(x + 3) for x in self._find_consecutive_GA_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_AC_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_AG_sequences(window[4:13])] + [(x + 3) for x in self._find_consecutive_CA_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_CT_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_GT_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_TG_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_TC_sequences(window[4:13])])
+                            # marked_window = self._mark_bases(window, rel_pos, [(x + 3) for x in self._find_consecutive_GA_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_AC_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_AG_sequences(window[4:13])] + [(x + 3) for x in self._find_consecutive_CA_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_CT_sequences(window[3:12])] + [(x + 3) for x in self._find_consecutive_GT_sequences(window[3:12])] + [(x + 4) for x in self._find_consecutive_TG_sequences(window[4:13])] + [(x + 4) for x in self._find_consecutive_TC_sequences(window[4:13])])
+                            bystander_positions = [bystander_pos - ADJACENT_BASES_LEFT_LEN + rel_pos  for bystander_pos in (T_positions_adj + A_positions_adj) if bystander_pos != pos]
+                            bystander_positions = [bystander_pos for bystander_pos in bystander_positions if bystander_pos > MIN_LEFT_GAP and bystander_pos <= window_size - MIN_RIGHT_GAP]
+                            marked_window = self._mark_bases(window, rel_pos, bystander_positions)
                             off_target_sites = marked_window.count('{') + dummy
                             int_pos_end = marked_window.find(']')
                             int_pos_ini = marked_window.find('[')
@@ -248,7 +264,7 @@ class ChosTALEDsPipeline(BasePipeline):
                                 final_window = self._mark_base_at_position(marked_window, int_pos_ini - 1)
                             else:
                                 final_window = marked_window
-                            start_position = pos -num + 1
+                            start_position = pos -rel_pos + 1
                             ac_positions = self._find_N_positions(window[4:13], start_position + 3 , 'AC')
                             tc_positions = self._find_N_positions(window[4:13], start_position + 3 , 'TC')
                             ag_positions = self._find_N_positions(window[4:13], start_position + 3 , 'AG')

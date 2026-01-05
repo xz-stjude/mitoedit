@@ -7,22 +7,31 @@ import pandas as pd
 
 from .pipelines.Cho_sTALEDs import ChosTALEDsPipeline
 from .pipelines.Mok2020_unified import Mok2020UnifiedPipeline
-from .talent_tools.findTAL import RunFindTALTask
-from .talent_tools.talutil import OptionObject
+from talenWF import FindTALTask
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-MIN_SPACER = 14
-MAX_SPACER = 18
-ARR_MIN = 14
-ARR_MAX = 18
 FILTER = 1
 CUT_POS = 31
 
+class ReferenceBaseError(Exception):
+    """Raised when """
+    pass
 
-def process_mitoedit(mtdna_seq, position, mutant_base, bystander_df=None, tale_nt_params=None):
+class PipelineError(Exception):
+    """Raised when """
+    pass
+class CommandError(Exception):
+    """Raised when """
+    pass
+
+class MitoEditError(Exception):
+    """Raised when """
+    pass
+
+def process_mitoedit(position, mutant_base, mtdna_seq = None, bystander_df=None, talen_params=None):
     """
     Core MitoEdit processing function for programmatic use.
     
@@ -31,11 +40,18 @@ def process_mitoedit(mtdna_seq, position, mutant_base, bystander_df=None, tale_n
         position (int): Position of the base to be changed (1-based)
         mutant_base (str): Mutant base to be changed into
         bystander_df (pd.DataFrame, optional): DataFrame containing bystander effect annotations
-        tale_nt_params (dict, optional): TALE-NT parameters for findTAL analysis
+        talen_params (dict, optional): TALE-NT parameters for findTAL analysis
         
     Returns:
         dict: Results containing windows_df, bystanders_df, adjacent_bases, fasta_content, and talen_output_df
     """
+    if mtdna_seq is None:
+        logger.info("Using default mtDNA sequence from resources/mito.txt")
+        try:
+            mtdna_seq = files('mitoedit.resources').joinpath('mito.txt').read_text().replace("\n", "")
+        except FileNotFoundError:
+            logger.error("Default mtDNA sequence file not found in resources/mito.txt")
+            raise
     mutant_base = mutant_base.upper()
 
     reference_base = mtdna_seq[position - 1].upper()
@@ -52,7 +68,7 @@ def process_mitoedit(mtdna_seq, position, mutant_base, bystander_df=None, tale_n
 
     logger.info(f"Selected pipeline: {pipeline_name}")
 
-    pipeline_instance = pipeline_class()
+    pipeline_instance = pipeline_class(talen_params['min_spacer'],talen_params['max_spacer'])
 
     logger.info(f"Processing mtDNA sequence for position {position}.")
     all_windows, adjacent_bases = pipeline_instance.process_mtDNA(mtdna_seq, position)
@@ -74,53 +90,28 @@ def process_mitoedit(mtdna_seq, position, mutant_base, bystander_df=None, tale_n
 
     logger.info("Pipeline processing completed successfully.")
 
-    if tale_nt_params is None:
-        tale_nt_params = {
+    if talen_params is None:
+        talen_params = {
             'min_spacer': MIN_SPACER,
             'max_spacer': MAX_SPACER,
             'array_min': ARR_MIN,
             'array_max': ARR_MAX,
-            'filter': FILTER,
-            'cut_pos': CUT_POS
         }
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False) as temp_fasta:
         temp_fasta.write(fasta_content)
         temp_fasta_path = temp_fasta.name
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_output:
-        temp_output_path = temp_output.name
-
     try:
-        logger.info("Running TALE-NT findTAL analysis")
-        RunFindTALTask(
-            OptionObject(
+        logger.info("Running talenWF findTAL analysis")
+        talen_output_df = FindTALTask(
                 fasta=temp_fasta_path,
-                min=tale_nt_params['min_spacer'],
-                max=tale_nt_params['max_spacer'],
-                arraymin=tale_nt_params['array_min'],
-                arraymax=tale_nt_params['array_max'],
-                outpath=temp_output_path,
-                filter=tale_nt_params['filter'],
-                filterbase=tale_nt_params['cut_pos'] if tale_nt_params['filter'] == 1 else -1,
-                cupstream=0,
-                gspec=False,
-                streubel=False,
-                check_offtargets=False,
-                offtargets_fasta='NA',
-                offtargets_ncbi='NA',
-                genome=False,
-                promoterome=False,
-                organism='NA',
-                logFilepath='NA',
-                nodeID=-1,
-                ip_address='',
-            ))
-        logger.info("TALE-NT analysis completed successfully")
-
-        logger.info("Loading TALE-NT output")
-        talen_output_df = pd.read_csv(temp_output_path, delimiter='\t', skiprows=2)
-        logger.info("Successfully loaded TALE-NT output.")
+                min_spacer=talen_params['min_spacer'],
+                max_spacer=talen_params['max_spacer'],
+                array_min=talen_params['array_min'],
+                array_max=talen_params['array_max'],
+            ).run()
+        logger.info("talenWF analysis completed successfully")
 
         if 'Plus strand sequence' not in talen_output_df.columns:
             logger.warning("Column 'Plus strand sequence' not found in the TALEN file")
@@ -154,7 +145,6 @@ def process_mitoedit(mtdna_seq, position, mutant_base, bystander_df=None, tale_n
 
     finally:
         os.unlink(temp_fasta_path)
-        os.unlink(temp_output_path)
 
     logger.info("All processing completed successfully.")
 
