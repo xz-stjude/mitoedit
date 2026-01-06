@@ -11,5 +11,5 @@ __all__ = [
     "BasePipeline",
     "ChosTALEDsPipeline",
     "Mok2020UnifiedPipeline",
-    "PIPELINE_CATALOG"
+    "PIPELINE_CATALOG",
 ]

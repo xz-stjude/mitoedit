@@ -28,6 +28,8 @@ classifiers = [
 keywords = ["bioinformatics", "mitochondrial", "dna", "base editing", "crispr", "tale"]
 dependencies = [
     "pandas>=2.0.0",
+    "talenWF>=0.1.2",
+    "xlsxwriter"
 ]
 
 [project.optional-dependencies]

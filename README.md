@@ -116,8 +116,6 @@ results = process_mitoedit(
         'max_spacer': 18,
         'array_min': 14,
         'array_max': 18,
-        'filter': 1,
-        'cut_pos': 31
     }
 )
 
