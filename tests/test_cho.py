@@ -16,12 +16,20 @@ from mitoedit.pipelines.Cho_sTALEDs import ChosTALEDsPipeline
 
 class TestChosTALEDsPipeline:
     def test_run_find_bystanders_T(self):
-        mtdna_seq = "GGGGGTGGGGGGGGGGGGGGGGGGGGGGGGAGGTGGGGTGGGGGGGGGGGGGGGGGGGGGGAGGGGG"
+        mtdna_seq = (
+            "GGGGGTGGGGGGGGGGGGGGGGGGGGGGGGAGGTGGGGTGGGGGGGGGGGGGGGGGGGGGGAGGGGG"
+        )
         position = 34
-        all_windows, adjacent_bases = ChosTALEDsPipeline().process_mtDNA(mtdna_seq, position)
-
+        all_windows, adjacent_bases = ChosTALEDsPipeline().process_mtDNA(
+            mtdna_seq, position
+        )
+        print(all_windows)
 
     def test_run_find_bystanders_A(self):
-        mtdna_seq = "GGGGGTGGGGGGGGGGGGGGGGGGGGGGGTGGGAGGGGAGGGGGGGGGGGGGGGGGGGGGGAGGGGG"
+        mtdna_seq = (
+            "GGGGGTGGGGGGGGGGGGGGGGGGGGGGGTGGGAGGGGAGGGGGGGGGGGGGGGGGGGGGGAGGGGG"
+        )
         position = 34
-        all_windows, adjacent_bases = ChosTALEDsPipeline().process_mtDNA(mtdna_seq, position)
+        all_windows, adjacent_bases = ChosTALEDsPipeline().process_mtDNA(
+            mtdna_seq, position
+        )

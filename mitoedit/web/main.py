@@ -1,4 +1,14 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Depends, Cookie, Response, status
+from fastapi import (
+    FastAPI,
+    File,
+    UploadFile,
+    Form,
+    HTTPException,
+    Depends,
+    Cookie,
+    Response,
+    status,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse, JSONResponse
@@ -25,7 +35,9 @@ os.makedirs("final_output", exist_ok=True)
 MITOEDIT_PASSWORD = os.getenv("MITOEDIT_PASSWORD")
 if not MITOEDIT_PASSWORD:
     logger.error("MITOEDIT_PASSWORD environment variable is not set")
-    raise ValueError("MITOEDIT_PASSWORD environment variable must be set to run the application")
+    raise ValueError(
+        "MITOEDIT_PASSWORD environment variable must be set to run the application"
+    )
 
 CORRECT_PASSWORD = MITOEDIT_PASSWORD
 COOKIE_NAME = "mitoedit_auth"
@@ -38,6 +50,7 @@ app = FastAPI(title="MitoEdit")
 # Mount static files and output directories
 app.mount("/static", StaticFiles(directory="web/static"), name="static")
 
+
 # Custom StaticFiles class with no-cache headers
 class NoCacheStaticFiles(StaticFiles):
     async def __call__(self, scope, receive, send):
@@ -47,21 +60,32 @@ class NoCacheStaticFiles(StaticFiles):
                 if message["type"] == "http.response.start":
                     # Add cache control headers
                     headers = list(message.get("headers", []))
-                    headers.append((b"Cache-Control", b"no-store, no-cache, must-revalidate, max-age=0"))
+                    headers.append(
+                        (
+                            b"Cache-Control",
+                            b"no-store, no-cache, must-revalidate, max-age=0",
+                        )
+                    )
                     headers.append((b"Pragma", b"no-cache"))
                     headers.append((b"Expires", b"0"))
                     message["headers"] = headers
                 await send(message)
-            
+
             await super().__call__(scope, receive, send_wrapper)
         else:
             await super().__call__(scope, receive, send)
 
+
 # Mount final_output with no-cache headers
-app.mount("/final_output", NoCacheStaticFiles(directory="final_output"), name="final_output")
+app.mount(
+    "/final_output", NoCacheStaticFiles(directory="final_output"), name="final_output"
+)
 
 # Setup templates
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+templates = Jinja2Templates(
+    directory=os.path.join(os.path.dirname(__file__), "templates")
+)
+
 
 # Middleware to redirect HTTP to HTTPS when SSL is enabled
 @app.middleware("http")
@@ -70,34 +94,39 @@ async def redirect_http_to_https(request: Request, call_next):
     ssl_keyfile = os.getenv("SSL_KEYFILE", "certs/mitoedit.key")
     ssl_certfile = os.getenv("SSL_CERTFILE", "certs/mitoedit.pem")
     ssl_enabled = os.path.exists(ssl_keyfile) and os.path.exists(ssl_certfile)
-    
+
     if ssl_enabled and request.url.scheme == "http":
         # Get the host and port from the request
         host = request.headers.get("host", "").split(":")[0]
         port = int(os.getenv("PORT", "443"))
-        
+
         # Create the HTTPS URL with validation
         # Define allowed hosts
         allowed_hosts = [
             "localhost",
             "127.0.0.1",
-            os.getenv("ALLOWED_HOST")  # From environment variable
+            os.getenv("ALLOWED_HOST"),  # From environment variable
         ]
-        
+
         # Filter out None values
         allowed_hosts = [h for h in allowed_hosts if h]
-        
+
         if host in allowed_hosts:
             url = request.url.replace(scheme="https", netloc=f"{host}:{port}")
             return RedirectResponse(url=str(url))
         else:
             # If host not in allowed list, redirect to a safe default using the configured allowed host
-            logger.warning(f"Blocked potential open redirect to non-allowed host: {host}")
+            logger.warning(
+                f"Blocked potential open redirect to non-allowed host: {host}"
+            )
             default_host = os.getenv("ALLOWED_HOST", "localhost")
-            return RedirectResponse(url=f"https://{default_host}:{port}{request.url.path}")
-    
+            return RedirectResponse(
+                url=f"https://{default_host}:{port}{request.url.path}"
+            )
+
     # Continue with the request if not redirecting
     return await call_next(request)
+
 
 # Authentication dependency
 async def get_current_user(auth_token: Optional[str] = Cookie(None, alias=COOKIE_NAME)):
@@ -105,13 +134,12 @@ async def get_current_user(auth_token: Optional[str] = Cookie(None, alias=COOKIE
         return None
     return {"authenticated": True}
 
+
 # Login page
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse(
-        "login.html",
-        {"request": request}
-    )
+    return templates.TemplateResponse("login.html", {"request": request})
+
 
 # Login form submission
 @app.post("/login")
@@ -122,31 +150,27 @@ async def login(response: Response, password: str = Form(...)):
         return response
     else:
         return RedirectResponse(
-            url="/login?error=Incorrect password",
-            status_code=status.HTTP_302_FOUND
+            url="/login?error=Incorrect password", status_code=status.HTTP_302_FOUND
         )
+
 
 # Main page - protected by authentication
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request, current_user = Depends(get_current_user)):
+async def home(request: Request, current_user=Depends(get_current_user)):
     if not current_user:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
-    
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request}
-    )
+
+    return templates.TemplateResponse("index.html", {"request": request})
+
 
 # About page - protected by authentication
 @app.get("/about", response_class=HTMLResponse)
-async def about(request: Request, current_user = Depends(get_current_user)):
+async def about(request: Request, current_user=Depends(get_current_user)):
     if not current_user:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
-    
-    return templates.TemplateResponse(
-        "about.html",
-        {"request": request}
-    )
+
+    return templates.TemplateResponse("about.html", {"request": request})
+
 
 @app.post("/analyze")
 async def analyze_sequence(
@@ -155,15 +179,14 @@ async def analyze_sequence(
     reference_base: str = Form(...),
     mutant_base: str = Form(...),
     sequence_file: UploadFile = File(None),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     # Check authentication
     if not current_user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
-    
+
     # Initialize input_file
     input_file = None
     tmp_file = None
@@ -172,25 +195,35 @@ async def analyze_sequence(
         # Get DNA sequence content
         if sequence_file and sequence_file.filename:
             logger.info(f"Processing uploaded sequence file: {sequence_file.filename}")
-            suffix = '.fasta' if sequence_file.filename.endswith(('.fasta', '.fa')) else '.txt'
+            suffix = (
+                ".fasta"
+                if sequence_file.filename.endswith((".fasta", ".fa"))
+                else ".txt"
+            )
             content = await sequence_file.read()
             if isinstance(content, bytes):
-                content = content.decode('utf-8')
+                content = content.decode("utf-8")
             content = content.strip()
             logger.info(f"Uploaded file content length: {len(content)}")
-            
+
             if not content:
                 raise HTTPException(status_code=400, detail="Uploaded file is empty")
         else:
             logger.info("Using default mtDNA file")
             # Get content from default mtDNA file
-            default_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'resources', 'mito.txt')
+            default_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "resources",
+                "mito.txt",
+            )
             logger.info(f"Reading default mtDNA file: {default_file}")
-            
+
             if not os.path.exists(default_file):
-                raise HTTPException(status_code=500, detail="Default mtDNA file not found")
-            
-            with open(default_file, 'r') as src:
+                raise HTTPException(
+                    status_code=500, detail="Default mtDNA file not found"
+                )
+
+            with open(default_file, "r") as src:
                 content = src.read().strip()
                 logger.info(f"Default mtDNA file content length: {len(content)}")
 
@@ -198,22 +231,26 @@ async def analyze_sequence(
             raise HTTPException(status_code=500, detail="DNA sequence content is empty")
 
         # Create temporary file with the content
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-        tmp.write(content.encode('utf-8'))
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+        tmp.write(content.encode("utf-8"))
         tmp.close()
         input_file = tmp.name
         tmp_file = input_file  # Store for cleanup
         logger.info(f"Created temporary file: {input_file}")
 
         # Verify the temporary file
-        with open(input_file, 'r') as verify:
+        with open(input_file, "r") as verify:
             verify_content = verify.read()
-            logger.info(f"Verified temporary file content length: {len(verify_content)}")
+            logger.info(
+                f"Verified temporary file content length: {len(verify_content)}"
+            )
 
         # Clean up and recreate output directories
-        directories = ['running', 'final_output']
+        directories = ["running", "final_output"]
         for dir_name in directories:
-            dir_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), dir_name)
+            dir_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), dir_name
+            )
             if os.path.exists(dir_path):
                 logger.info(f"Cleaning up directory: {dir_path}")
                 shutil.rmtree(dir_path)
@@ -222,78 +259,81 @@ async def analyze_sequence(
 
         # Run mitoedit analysis
         try:
-            logger.info(f"Starting analysis with position={position}, ref={reference_base}, mut={mutant_base}")
+            logger.info(
+                f"Starting analysis with position={position}, ref={reference_base}, mut={mutant_base}"
+            )
             # Define output file path
-            output_prefix = f'final_output/'
-            
+            output_prefix = f"final_output/"
+
             # Override sys.argv with our parameters
             if sequence_file and sequence_file.filename:
                 # If user uploaded a file, include the --input_file parameter
                 args = [
-                    'mitoedit',
-                    '--input_file', input_file,
-                    '--output_prefix', output_prefix,
-                    '--write_excel',
+                    "mitoedit",
+                    "--input_file",
+                    input_file,
+                    "--output_prefix",
+                    output_prefix,
+                    "--write_excel",
                     str(position),
-                    mutant_base.upper()
+                    mutant_base.upper(),
                 ]
             else:
                 # If using default mtDNA file, don't include --input_file parameter
                 args = [
-                    'mitoedit',
-                    '--output_prefix', output_prefix,
-                    '--write_excel',
+                    "mitoedit",
+                    "--output_prefix",
+                    output_prefix,
+                    "--write_excel",
                     str(position),
-                    mutant_base.upper()
+                    mutant_base.upper(),
                 ]
             logger.info(f"Running mitoedit with args: {args}")
             sys.argv = args
             mitoedit.main()
-            logger.info("Analysis completed successfully")  
+            logger.info("Analysis completed successfully")
         except ReferenceBaseError as e:
             logger.error(f"Reference base error: {str(e)}")
             raise HTTPException(
-                status_code=400, 
-                detail=f"Reference base error: {str(e)}"
+                status_code=400, detail=f"Reference base error: {str(e)}"
             )
         except PipelineError as e:
             logger.error(f"Pipeline error: {str(e)}")
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Pipeline error: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Pipeline error: {str(e)}")
         except CommandError as e:
             logger.error(f"Command execution error: {str(e)}")
             raise HTTPException(
-                status_code=500, 
-                detail=f"Command execution error: {str(e)}"
+                status_code=500, detail=f"Command execution error: {str(e)}"
             )
         except MitoEditError as e:
             logger.error(f"MitoEdit error: {str(e)}")
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Analysis error: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
         except Exception as e:
             logger.error(f"Error during mitoedit analysis: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
 
         # Get the results file path
-        results_file = f'final_output/final_{position}_{mutant_base}.xlsx'
-        
+        results_file = f"final_output/final_{position}_{mutant_base}.xlsx"
+
         if os.path.exists(results_file):
-            response = JSONResponse(content={
-                "status": "success",
-                "results_file": results_file,
-                "filename": f"final_{position}_{mutant_base}.xlsx"
-            })
+            response = JSONResponse(
+                content={
+                    "status": "success",
+                    "results_file": results_file,
+                    "filename": f"final_{position}_{mutant_base}.xlsx",
+                }
+            )
             # Add cache control headers
-            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Cache-Control"] = (
+                "no-store, no-cache, must-revalidate, max-age=0"
+            )
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
             return response
         else:
-            raise HTTPException(status_code=500, detail="Analysis failed to generate results")
+            raise HTTPException(
+                status_code=500, detail="Analysis failed to generate results"
+            )
 
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
@@ -307,26 +347,27 @@ async def analyze_sequence(
             except Exception as e:
                 logger.error(f"Error cleaning up temporary file: {str(e)}")
 
+
 if __name__ == "__main__":
     import uvicorn
     import os
-    
+
     port = int(os.getenv("PORT", "8000"))
-    
+
     # Check if SSL certificate and key files exist
     ssl_keyfile = os.getenv("SSL_KEYFILE", "certs/mitoedit.key")
     ssl_certfile = os.getenv("SSL_CERTFILE", "certs/mitoedit.pem")
-    
+
     use_ssl = os.path.exists(ssl_keyfile) and os.path.exists(ssl_certfile)
-    
+
     if use_ssl:
         logger.info(f"Starting HTTPS server on port {port} with SSL")
         uvicorn.run(
-            app, 
-            host="0.0.0.0", 
+            app,
+            host="0.0.0.0",
             port=port,
             ssl_keyfile=ssl_keyfile,
-            ssl_certfile=ssl_certfile
+            ssl_certfile=ssl_certfile,
         )
     else:
         logger.info(f"Starting HTTP server on port {port} without SSL")
