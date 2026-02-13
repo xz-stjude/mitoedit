@@ -24,7 +24,12 @@ def main():
     )
     # yapf: disable
     parser.add_argument('--mtdna_seq_path', '-i', type=str, default=None,       help='File containing the mtDNA sequence as plain text.')
-    parser.add_argument('--bystander_file'      , type=str,                     help='Excel file containing bystander effect annotations (optional, for human mtDNA analysis)')
+    parser.add_argument('--bystander_file'      , type=str,                     help='Excel file containing bystander effect annotations (optional, for human mtDNA analysis)',
+                            default=os.path.join(
+                                os.path.dirname(os.path.abspath(__file__)),
+                                'resources',
+                                "annotated_human_mtDNA_10022024_for_bystanders_EDITED.xlsx"
+                            ))
     parser.add_argument('--output_prefix', '-o' , type=str, default='output',   help='Prefix for output CSV files (default: output)')
     parser.add_argument('--min_spacer'          , type=int, default=MIN_SPACER, help=f'Minimum spacer length for TALE-NT (default: {MIN_SPACER})')
     parser.add_argument('--max_spacer'          , type=int, default=MAX_SPACER, help=f'Maximum spacer length for TALE-NT (default: {MAX_SPACER})')
@@ -54,6 +59,7 @@ def main():
             mtdna_seq = fh.read().replace("\n", "")
 
     bystander_df = None
+    logger.info(f"Reading Bystander information from file: {args.bystander_file}")
     if args.bystander_file:
         bystander_file = os.path.abspath(args.bystander_file)
         if os.path.isfile(bystander_file):
@@ -62,6 +68,10 @@ def main():
         else:
             logger.warning(
                 f"Bystander file {bystander_file} does not exist. Skipping bystander information."
+            )
+        if bystander_df is not None and len(bystander_df):
+            logger.info(
+                f"Successfully got Bystander information for {len(bystander_df)} mutations."
             )
 
     talen_params = {

@@ -120,6 +120,8 @@ def process_mitoedit(
             "Target Location",
             "Number of Bystanders",
             "Position of Bystanders",
+            "Edit type",
+            "Strategy Name",
             "Optimal Flanking TALEs",
             "Flag (CheckBystanderEffect)",
         ],
@@ -132,6 +134,7 @@ def process_mitoedit(
         windows_df, bystander_df
     )
 
+    logger.info("Pipeline processing completed successfully.")
     logger.info("Pipeline processing completed successfully.")
 
     if talen_params is None:
@@ -171,7 +174,9 @@ def process_mitoedit(
                 cleaned_sequence = re.sub(
                     r"[{}\[\]]", "", row["Window Sequence"]
                 ).lower()
-                windows_df.at[index, "Matching TALEs"] = cleaned_sequence in txt_bases
+                windows_df.at[index, "Optimal Flanking TALEs"] = (
+                    cleaned_sequence in txt_bases
+                )
                 for txt_base in txt_bases:
                     if txt_base == cleaned_sequence:
                         left_index = 1
