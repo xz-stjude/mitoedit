@@ -161,7 +161,7 @@ class BasePipeline(ABC):
         return sequence.upper()
 
     def _find_dinucs(
-        self, sequence, dinucs, target_base, double_match_index=1, unique=True
+        self, sequence, dinucs, target_base, double_match_index=1, unique=True, offset=0
     ):
         """Find all positions where the specified dinucleotides occur"""
         logger.debug(f"Finding dinucleotides {dinucs} in sequence.")
@@ -176,12 +176,12 @@ class BasePipeline(ABC):
                             2,
                         ], "double_match_index must be 1 or 2"
                         positions.append(
-                            i + double_match_index
+                            i + double_match_index + offset
                         )  # if double match, return double_match_index (1-based)
                     else:
-                        positions.append(i + 1)
+                        positions.append(i + 1 + offset)
                 elif sequence[i + 1] == target_base:
-                    positions.append(i + 2)
+                    positions.append(i + 2 + offset)
                 else:
                     raise ValueError(
                         f"given dinucleotide {sequence[i:i+2]} does not contain the target base is {target_base}"
