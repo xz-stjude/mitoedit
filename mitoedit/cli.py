@@ -6,6 +6,7 @@ import pandas as pd
 
 from . import process_mitoedit
 from . import MIN_SPACER, MAX_SPACER, ARR_MIN, ARR_MAX
+from .io import read_sequence_file
 import logging
 import sys
 
@@ -55,8 +56,7 @@ def main():
             raise
     else:
         logger.info(f"Reading mtDNA sequence from file: {args.mtdna_seq_path}")
-        with open(args.mtdna_seq_path, "r") as fh:
-            mtdna_seq = fh.read().replace("\n", "")
+        mtdna_seq = read_sequence_file(args.mtdna_seq_path)
 
     bystander_df = None
     logger.info(f"Reading Bystander information from file: {args.bystander_file}")
@@ -85,6 +85,7 @@ def main():
         mtdna_seq=mtdna_seq,
         position=args.position,
         mutant_base=args.mutant_base,
+        reference_base=args.reference_base,
         bystander_df=bystander_df,
         talen_params=talen_params,
     )

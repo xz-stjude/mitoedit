@@ -186,22 +186,45 @@ sudo docker build -t mitoedit .
 
 2. **Run the container:**
 
-For HTTP (port 80):
+For local development (HTTP, port 8000):
 
 ```bash
-sudo docker run -d -p 80:80 -e MITOEDIT_PASSWORD=your_secure_password mitoedit
+docker run -d -p 8000:8000 \
+  -e PORT=8000 \
+  -e MITOEDIT_PASSWORD=your_secure_password \
+  mitoedit
 ```
 
-For HTTPS (port 443):
+The web interface will be available at http://localhost:8000.
+
+For production behind a reverse proxy (HTTP, the proxy handles SSL):
 
 ```bash
-sudo docker run -d -p 443:443 -e PORT=443 -e MITOEDIT_PASSWORD=your_secure_password mitoedit
+docker run -d --restart unless-stopped \
+  -p 8000:8000 \
+  -e PORT=8000 \
+  -e MITOEDIT_PASSWORD=your_secure_password \
+  mitoedit
 ```
+
+For production with the container serving HTTPS directly (mount your own certificate and key):
+
+```bash
+docker run -d --restart unless-stopped \
+  -p 443:443 -p 80:80 \
+  -e PORT=443 \
+  -e MITOEDIT_PASSWORD=your_secure_password \
+  -e ALLOWED_HOST=your.domain.example.com \
+  -v /path/to/your/certs:/app/certs:ro \
+  mitoedit
+```
+
+The certificate must be at `/path/to/your/certs/mitoedit.pem` and the key at `/path/to/your/certs/mitoedit.key`. If the files are absent the server falls back to plain HTTP automatically.
 
 The web interface will be available at:
 
-- HTTP: http://localhost:80 (when using port 80)
-- HTTPS: https://localhost:443 (when using port 443)
+- HTTP: http://localhost:8000 (development / behind-proxy mode)
+- HTTPS: https://your.domain.example.com (direct-TLS mode)
 
 #### Stopping/Terminating the Docker Container
 
@@ -282,8 +305,11 @@ MitoEdit requires the following parameters:
 ### Optional Parameters:
 
 #### Input File:
-- `--mtdna_seq_path, -i`: The path to a file containing the DNA sequence as plain text.
+- `--mtdna_seq_path, -i`: Path to a file containing the DNA sequence. Two formats are supported:
+  - **`.txt`** — plain text, no header. The entire file content is treated as the sequence.
+  - **`.fasta` / `.fa`** — FASTA format. The header line(s) starting with `>` are ignored; all remaining lines are joined into the sequence.
 - If not provided, MitoEdit will use the [human mtDNA sequence](https://www.ncbi.nlm.nih.gov/nuccore/251831106) from NCBI by default.
+- The web interface accepts the same file formats via the sequence upload field.
 
 #### Bystander Analysis:
 - `--bystander_file`: Excel file containing bystander effect annotations (optional, for human mtDNA analysis).
@@ -299,6 +325,71 @@ MitoEdit requires the following parameters:
 - `--filter`: TALE-NT filter setting (default: 1).
 - `--cut_pos`: TALE-NT cut position (default: 31).
 
+## Custom Sequence Alignment and Annotation Liftover
+
+When a custom sequence is provided, MitoEdit automatically aligns it to the
+human reference mtDNA (NC_012920.1) and uses the resulting position map to
+translate results back into reference coordinates. This enables annotation
+lookup even for sequences that are not the canonical reference — including
+variant mtDNA sequences, patient-derived sequences, and subregions.
+
+### How alignment works
+
+A local pairwise alignment (BioPython `PairwiseAligner`) is computed between
+the custom sequence and the reference. Local alignment is used so that
+subregions (sequences that cover only part of the mitochondrial genome) align
+correctly without being penalised for missing flanking sequence.
+
+The alignment produces a bidirectional position map:
+
+- **custom → reference**: for each 1-based position in the custom sequence,
+  the corresponding 1-based position in the reference, or `None` if that base
+  is an insertion relative to the reference.
+- **reference → custom**: for each 1-based reference position, the
+  corresponding custom position, or `None` if that base was deleted in the
+  custom sequence.
+
+### Extra columns added to `all_windows.csv` (custom sequence only)
+
+| Column | Description |
+|--------|-------------|
+| `Reference Position of Bystanders` | List of reference-genome positions corresponding 1-to-1 to `Position of Bystanders`. `None` for any bystander that falls within an insertion relative to the reference. |
+| `Window Has Indels` | `True` if the alignment within the window span contains any insertion or deletion relative to the reference. Windows flagged here should be interpreted with extra care as the editing context may differ from the annotated reference. |
+
+### Annotation liftover (`all_bystanders.csv`, custom sequence only)
+
+When a custom sequence is provided, MitoEdit automatically loads the bundled
+human mtDNA annotation file and looks up functional annotations for each
+bystander using its **reference** position. This means annotation data is
+available for custom sequences without any extra input from the user.
+
+The bystander table gains a split coordinate representation:
+
+| Column | Description |
+|--------|-------------|
+| `Custom Bystander Position` | 1-based position of the bystander in the **custom** sequence. Use this to locate the bystander in your input file. |
+| `Reference Bystander Position` | Corresponding 1-based position in the human reference mtDNA. Used for annotation lookup. |
+| `Reference Base` | Reference allele at that position. |
+| `Mutant Base` | Predicted edited allele. |
+| `Location On Genome` | Genomic feature (e.g. Complex I, tRNA). |
+| `Predicted Mutation Impact` | Predicted pathogenicity of the edit. |
+| `SNV Type` | Synonymous or non-synonymous. |
+| `AA Variant` | Amino acid change notation. |
+| `Functional Impact` | Qualitative functional impact rating. |
+| `MutationAssessor Score` | Quantitative functional impact score. |
+
+If a bystander falls within an insertion relative to the reference (no
+corresponding reference position), it will not appear in the bystander table.
+
+### Behaviour summary by mode
+
+| Mode | Alignment run | Extra window columns | Bystander coordinates | Annotation source |
+|------|:---:|:---:|---|---|
+| Default (human reference mtDNA) | No | — | `Bystander Position` (reference coords) | Bundled xlsx, loaded if `--bystander_file` provided |
+| Custom sequence | Yes | `Reference Position of Bystanders`, `Window Has Indels` | `Custom Bystander Position` + `Reference Bystander Position` | Bundled xlsx, **loaded automatically** |
+
+---
+
 ## What does MitoEdit output?
 
 MitoEdit generates the following outputs in the specified output directory:
@@ -311,7 +402,7 @@ MitoEdit generates the following outputs in the specified output directory:
 - `pipeline_bystanders.csv`: Contains bystander effect information (if available).
 - `all_windows.csv`: Contains all target windows from the pipeline.
 - `all_bystanders.csv`: Contains all bystander effect information (if available).
-- `talen_output.txt`: Contains the output from TALE-NT Tool describing the optimal flanking TALE sequences possible.
+- `talen_output.csv`: Contains the output from TALE-NT Tool describing the optimal flanking TALE sequences possible.
 
 #### FASTA File:
 
@@ -388,21 +479,34 @@ When you run this command, MitoEdit generates CSV files in the `output` director
 #### To target any other DNA sequence:
 
 ```
-mitoedit --mtdna_seq_path test.txt 33 A
+mitoedit --mtdna_seq_path my_seq.fasta 33 A
 ```
 
+Accepted file formats: `.txt` (plain sequence, no header) or `.fasta` / `.fa`
+(FASTA format; header line starting with `>` is ignored). The web interface
+accepts the same formats via the upload field.
+
 **Expected Output:**
-When using an input file, the generated CSV files will contain results similar to the following: (example taken from the file provided in the [test file](test/input/test.txt) folder)
 
-**1. all_windows.csv**
-| Pipeline| Position |Reference_Base | Mutant Base | Window Size | Window Sequence | Target Location| Number of bystanders | Position of Bystanders | Optimal Flanking TALEs | Flag_CheckBystanderEffect |LeftTALE1 | RightTALE1|LeftTALE2|RightTALE2 |
-|--------------|--------------|--------------|--------------|--------------|--------------|--------------|--------------|--------------|--------------|--------------|--------------|--------|---------|-------------|
-|Mok2020_unified| 33| G| A| 14bp| TG{G}[G]A{G}AACT{C}TCT| Position 4 from the 5' end |3| [32, 35, 40] |FALSE| TRUE|
-|Mok2020_unified| 33| G| A| 14bp| CTG{G}[G]A{G}AACTCTC| Position 5 from the 5' end| 2| [32, 35]| FALSE| TRUE |
-|Mok2020_unified| 33| G| A| 14bp| ACTG{G}[G]AGAACTCT| Position 6 from the 5' end |1| [32] |FALSE| TRUE|
-|Mok2020_unified| 33| G| A| 14bp| TACTG{G}[G]AGAACTC| Position 7 from the 5' end |1| [32] |TRUE |TRUE |T TACCCCCCACTATTAACC |TCTGTGCTAGTAACC A |T ACCCCCCACTATTAACC |TCTGTGCTAGTAACC A|
+**1. all_windows.csv** — two extra columns appear when a custom sequence is used:
 
-**Note**: When optimal flanking TALE sequences are found, the sequence is added to the `LeftTALE` and `RightTALE` columns respectively. The impact of bystander edits is not provided when using an input DNA file.
+| Pipeline | Position | Reference Base | Mutant Base | Window Size | Window Sequence | Target Location | Number of Bystanders | Position of Bystanders | Reference Position of Bystanders | Window Has Indels | … |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Mok2020_unified | 33 | G | A | 14bp | TG{G}[G]A{G}AACT{C}TCT | Position 4 from the 5' end | 3 | [32, 35, 40] | [32, 35, 40] | False | … |
+| Mok2020_unified | 33 | G | A | 14bp | TACTG{G}[G]AGAACTC | Position 7 from the 5' end | 1 | [32] | [32] | False | … |
+
+- `Reference Position of Bystanders` — the same positions translated into reference (NC_012920.1) coordinates via alignment. `None` for any bystander that is an insertion relative to the reference.
+- `Window Has Indels` — `True` if the window's aligned span contains any insertion or deletion.
+
+When optimal flanking TALE sequences are found, `LeftTALE1`, `RightTALE1` etc. are also populated.
+
+**2. all_bystanders.csv** — when a custom sequence is used, annotation is looked up automatically via the reference position, and both coordinate systems are shown:
+
+| Custom Bystander Position | Reference Bystander Position | Reference Base | Mutant Base | Location On Genome | Predicted Mutation Impact | SNV Type | AA Variant | Functional Impact | MutationAssessor Score |
+|---|---|---|---|---|---|---|---|---|---|
+| 32 | 32 | C | T | Complex 1 | Predicted Benign | synonymous SNV | … | | |
+
+**Note**: `Custom Bystander Position` gives the bystander location in your input file. `Reference Bystander Position` is the corresponding human reference coordinate used for annotation lookup. When using the default reference sequence (no file upload), the table uses a single `Bystander Position` column in reference coordinates.
 
 ## Notes
 
@@ -412,12 +516,14 @@ When using an input file, the generated CSV files will contain results similar t
 - **Unified Pipeline**: The Mok2020 pipeline now combines all variants (G1333, G1397, DddA11) and positioning strategies in a single unified approach.
 - **Package Installation**: Install using `pip install .` for proper package management and console script registration.
 - **Library Usage**: MitoEdit can now be imported and used as a Python library in addition to the command-line interface.
-- **Input File Formatting**: Ensure that your input file is correctly formatted as plain text, with the reference base matching the base at the specified position.
-- **Supported File Formats**: MitoEdit can read plain text files for DNA sequences.
-- **Minimum Upload Sequence Length**: The input file must contain at least 35 bases, covering the target base on either side, for accurate processing.
+- **Input File Formatting**: Ensure that your input file is correctly formatted, with the reference base matching the base at the specified position.
+- **Supported File Formats**: MitoEdit accepts `.txt` (plain sequence, no header) and `.fasta` / `.fa` (FASTA format; header line starting with `>` is ignored). This applies to both the CLI (`--mtdna_seq_path`) and the web interface upload field.
+- **Minimum Sequence Length**: The input sequence must contain at least 35 bases on either side of the target position for accurate window generation.
+- **Custom Sequence Alignment**: When a custom sequence is provided, MitoEdit automatically runs a local pairwise alignment against the human reference mtDNA. Bystander annotations are looked up using the lifted-over reference coordinates — no extra input is needed.
+- **Annotation for Custom Sequences**: The bundled human mtDNA annotation file is loaded automatically when a custom sequence is used. Bystander positions that fall within insertions relative to the reference (no corresponding reference coordinate) will not have annotations.
 - **Output File Organization**: All output files are organized in the specified output directory with clear naming conventions.
-- **Logging:** MitoEdit logs its progress and any issues encountered during execution to the console.
-- **Species Support**: While the tool is designed primarily for human mtDNA, other DNA sequences can also be uploaded and used.
+- **Logging**: MitoEdit logs its progress and any issues encountered during execution to the console.
+- **Species Support**: While the tool is designed primarily for human mtDNA, other DNA sequences can also be analysed. Alignment-based annotation liftover applies only when the sequence is sufficiently similar to the human reference mtDNA.
 - **Modifying TALE-NT Workflow**: If no matching flanking TALE sequences are identified, consider modifying the TALE-NT parameter by setting `--filter 2`. This will identify all TALE pairs targeting any base in the target window, not just those for the target base. For further information, refer to the [TALE-NT FAQs](https://tale-nt.cac.cornell.edu/faqs).
 
 ## How to Cite?

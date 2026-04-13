@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import tempfile
@@ -7,6 +8,7 @@ import pandas as pd
 
 from .pipelines.Cho_sTALEDs import ChosTALEDsPipeline
 from .pipelines.Mok2020_unified import Mok2020UnifiedPipeline
+from .alignment import build_position_maps, window_has_indels
 from talenWF import FindTALTask
 
 import logging
@@ -20,7 +22,7 @@ ARR_MAX = 18
 
 
 class ReferenceBaseError(Exception):
-    """Raised when"""
+    """Raised when the provided reference base does not match the base at the given position in the sequence."""
 
     pass
 
@@ -47,6 +49,7 @@ def process_mitoedit(
     position,
     mutant_base,
     mtdna_seq=None,
+    reference_base=None,
     bystander_df=None,
     talen_params={
         "min_spacer": MIN_SPACER,
@@ -68,7 +71,9 @@ def process_mitoedit(
     Returns:
         dict: Results containing windows_df, bystanders_df, adjacent_bases, fasta_content, and talen_output_df
     """
-    if mtdna_seq is None:
+    is_custom_sequence = mtdna_seq is not None
+
+    if not is_custom_sequence:
         logger.info("Using default mtDNA sequence from resources/mito.txt")
         try:
             mtdna_seq = (
@@ -80,10 +85,44 @@ def process_mitoedit(
         except FileNotFoundError:
             logger.error("Default mtDNA sequence file not found in resources/mito.txt")
             raise
+
+    if is_custom_sequence and bystander_df is None:
+        try:
+            _xlsx = (
+                files("mitoedit.resources")
+                .joinpath("annotated_human_mtDNA_10022024_for_bystanders_EDITED.xlsx")
+                .read_bytes()
+            )
+            bystander_df = pd.read_excel(io.BytesIO(_xlsx))
+            logger.info("Auto-loaded bundled bystander annotation: %d rows.", len(bystander_df))
+        except Exception as exc:
+            logger.warning("Could not auto-load bundled bystander annotation: %s", exc)
+
     mutant_base = mutant_base.upper()
 
-    reference_base = mtdna_seq[position - 1].upper()
-    logger.info(f"Reference base at position {position} is {reference_base}")
+    reference_base_in_seq = mtdna_seq[position - 1].upper()
+    logger.info(f"Reference base at position {position} is {reference_base_in_seq}")
+
+    if reference_base is not None:
+        if reference_base.upper() != reference_base_in_seq:
+            raise ReferenceBaseError(
+                f"Reference base mismatch at position {position}: "
+                f"expected '{reference_base.upper()}' but found '{reference_base_in_seq}' in the sequence."
+            )
+
+    reference_base = reference_base_in_seq
+
+    custom_to_ref = None
+    ref_to_custom = None
+    if is_custom_sequence:
+        _ref_seq = (
+            files("mitoedit.resources")
+            .joinpath("mito.txt")
+            .read_text()
+            .replace("\n", "")
+        )
+        logger.info("Running global alignment: custom sequence → reference mtDNA.")
+        custom_to_ref, ref_to_custom = build_position_maps(mtdna_seq, _ref_seq)
 
     if (reference_base, mutant_base) in [("C", "T"), ("G", "A")]:
         pipeline_class = Mok2020UnifiedPipeline
@@ -130,9 +169,53 @@ def process_mitoedit(
     fasta_content = f">Adjacent_bases_position_{position}\n{adjacent_bases}\n"
 
     logger.info("Processing pipeline data.")
-    windows_df, bystanders_df = pipeline_instance.process_bystander_data(
-        windows_df, bystander_df
-    )
+    if is_custom_sequence and custom_to_ref is not None:
+        # Lift bystander positions to reference coordinates
+        windows_df["Reference Position of Bystanders"] = windows_df[
+            "Position of Bystanders"
+        ].apply(
+            lambda lst: [custom_to_ref.get(p) for p in lst] if isinstance(lst, list) else []
+        )
+        # Flag windows that span an indel
+        windows_df["Window Has Indels"] = windows_df.apply(
+            lambda row: window_has_indels(row, custom_to_ref), axis=1
+        )
+        # Look up bystander effects using reference positions
+        if bystander_df is not None and not bystander_df.empty:
+            ref_positions = {
+                rp
+                for lst in windows_df["Reference Position of Bystanders"]
+                for rp in lst
+                if rp is not None
+            }
+            filtered = bystander_df[bystander_df["mtDNA_pos"].isin(ref_positions)].copy()
+            bystanders_df = filtered[
+                [
+                    "mtDNA_pos", "Ref. Allele", "Mutant Allele", "Location",
+                    "Predicted Impact", "Syn vs NonSyn", "AA Variant",
+                    "Func. Impact", "MutationAssessor Score",
+                ]
+            ].copy()
+            bystanders_df.columns = [
+                "Reference Bystander Position", "Reference Base", "Mutant Base",
+                "Location On Genome", "Predicted Mutation Impact", "SNV Type",
+                "AA Variant", "Functional Impact", "MutationAssessor Score",
+            ]
+            bystanders_df.insert(
+                0,
+                "Custom Bystander Position",
+                bystanders_df["Reference Bystander Position"].map(
+                    lambda rp: ref_to_custom.get(rp)
+                ),
+            )
+            bystanders_df = bystanders_df.reset_index(drop=True)
+        else:
+            bystanders_df = pd.DataFrame()
+    else:
+        # Original reference-sequence path — untouched
+        windows_df, bystanders_df = pipeline_instance.process_bystander_data(
+            windows_df, bystander_df
+        )
 
     logger.info("Pipeline processing completed successfully.")
     logger.info("Pipeline processing completed successfully.")

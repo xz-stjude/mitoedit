@@ -188,7 +188,6 @@ certs/
 !inputs/mito.txt
 
 # Web server
-web/static/*
 !web/static/.gitkeep
 
 # Python

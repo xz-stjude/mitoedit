@@ -20,12 +20,13 @@ import tempfile
 import shutil
 from pathlib import Path
 from typing import Optional
-from ..logging import logger
+from ..core import logger
 
 # Add the parent directory to Python path so we can import mitoedit
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import mitoedit
 from mitoedit import MitoEditError, ReferenceBaseError, PipelineError, CommandError
+from mitoedit.io import parse_sequence_content
 
 # Create necessary directories
 os.makedirs("web/static", exist_ok=True)
@@ -195,55 +196,28 @@ async def analyze_sequence(
         # Get DNA sequence content
         if sequence_file and sequence_file.filename:
             logger.info(f"Processing uploaded sequence file: {sequence_file.filename}")
-            suffix = (
-                ".fasta"
-                if sequence_file.filename.endswith((".fasta", ".fa"))
-                else ".txt"
-            )
-            content = await sequence_file.read()
-            if isinstance(content, bytes):
-                content = content.decode("utf-8")
-            content = content.strip()
-            logger.info(f"Uploaded file content length: {len(content)}")
-
-            if not content:
+            raw = await sequence_file.read()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            if not raw.strip():
                 raise HTTPException(status_code=400, detail="Uploaded file is empty")
+            try:
+                seq = parse_sequence_content(raw, sequence_file.filename)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            logger.info(f"Parsed sequence length: {len(seq)}")
+
+            # Write clean sequence (no header) to a temp plain-text file
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w")
+            tmp.write(seq)
+            tmp.close()
+            input_file = tmp.name
+            tmp_file = input_file
+            logger.info(f"Created temporary file: {input_file}")
         else:
             logger.info("Using default mtDNA file")
-            # Get content from default mtDNA file
-            default_file = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "resources",
-                "mito.txt",
-            )
-            logger.info(f"Reading default mtDNA file: {default_file}")
-
-            if not os.path.exists(default_file):
-                raise HTTPException(
-                    status_code=500, detail="Default mtDNA file not found"
-                )
-
-            with open(default_file, "r") as src:
-                content = src.read().strip()
-                logger.info(f"Default mtDNA file content length: {len(content)}")
-
-        if not content:
-            raise HTTPException(status_code=500, detail="DNA sequence content is empty")
-
-        # Create temporary file with the content
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
-        tmp.write(content.encode("utf-8"))
-        tmp.close()
-        input_file = tmp.name
-        tmp_file = input_file  # Store for cleanup
-        logger.info(f"Created temporary file: {input_file}")
-
-        # Verify the temporary file
-        with open(input_file, "r") as verify:
-            verify_content = verify.read()
-            logger.info(
-                f"Verified temporary file content length: {len(verify_content)}"
-            )
+            input_file = None
+            tmp_file = None
 
         # Clean up and recreate output directories
         directories = ["running", "final_output"]
@@ -266,11 +240,10 @@ async def analyze_sequence(
             output_prefix = f"final_output/"
 
             # Override sys.argv with our parameters
-            if sequence_file and sequence_file.filename:
-                # If user uploaded a file, include the --input_file parameter
+            if input_file:
                 args = [
                     "mitoedit",
-                    "--input_file",
+                    "--mtdna_seq_path",
                     input_file,
                     "--output_prefix",
                     output_prefix,
@@ -279,7 +252,6 @@ async def analyze_sequence(
                     mutant_base.upper(),
                 ]
             else:
-                # If using default mtDNA file, don't include --input_file parameter
                 args = [
                     "mitoedit",
                     "--output_prefix",
