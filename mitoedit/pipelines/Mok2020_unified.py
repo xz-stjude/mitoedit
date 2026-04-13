@@ -7,6 +7,18 @@ WINDOW_SIZE_MIN = 14
 WINDOW_SIZE_MAX = 19
 
 
+DdCBE_G1397 = "DdCBE_G1397"
+DdCBE_G1333 = "DdCBE_G1333"
+DddA11_G1397 = "DddA11_G1397"
+STRATEGIES = [DdCBE_G1397, DdCBE_G1333, DddA11_G1397]
+
+
+def revcomp(seq):
+    return "".join(
+        [{"A": "T", "T": "A", "C": "G", "G": "C"}[c] for c in seq.upper()][::-1]
+    )
+
+
 class Mok2020UnifiedPipeline(BasePipeline):
     """
     Unified Mok2020 Base Editing Pipeline (All Variants Combined)
@@ -38,155 +50,108 @@ class Mok2020UnifiedPipeline(BasePipeline):
         max_window_size: int = WINDOW_SIZE_MAX,
     ):
         super().__init__(min_window_size, max_window_size)
-        self.pipeline_name = "Mok2020_Unified"
+        self.pipeline_name = "Mok2020"
 
-    def _get_g1397_position_range(self, window_size):
-        """Get the position range for G1397 window generation."""
-        return range(4, window_size - 3)
+    def _get_position_range(self, strategy_name, window_size):
+        """Get the 1-based position range (inclusive) for target site within the spacer (from 5' end)."""
+        position_ranges = {
+            DdCBE_G1397: (window_size - 7 + 1, window_size - 4 + 1),
+            DdCBE_G1333: (4, 10),
+            DddA11_G1397: (window_size - 7 + 1, window_size - 4 + 1),
+        }
+        return position_ranges[strategy_name]
 
-    def _get_g1333_position_range(self, window_size):
-        """Get the position range for G1333 window generation."""
-        return range(3, window_size - 2)
+    def _get_context(self, strategy_name):
+        """Get the dinucleotide context for target and bystanders."""
+        CONTEXTS = {
+            DdCBE_G1397: (["TC"], ["GA"]),
+            DdCBE_G1333: (["TC"], ["GA"]),
+            DddA11_G1397: (["TC", "AC", "CC"], ["GA", "GT", "GG"]),
+        }
+        return CONTEXTS[strategy_name]
 
-    def _get_ddda11_position_range(self, window_size):
-        """Get the position range for DddA11 window generation."""
-        return range(4, window_size - 3)
+    def _get_C_context(self, strategy_name):
+        """Get the 5' dinucleotide context for target and bystanders."""
+        return self._get_context(strategy_name)[0]
 
-    def _get_strategy_zones(self, strategy_name, window_size):
-        """Return (fwd_zone, rev_zone) for TC and GA bystander position filtering.
+    def _get_G_context(self, strategy_name):
+        """Get the 3' dinucleotide context for target and bystanders."""
+        return self._get_context(strategy_name)[1]
 
-        fwd_zone : 1-indexed window positions where a TC-context C is an active bystander
-                   (forward strand, or equivalently where its CC neighbour is eligible for TCC).
-        rev_zone : 1-indexed window positions where a GA-context G is an active bystander
-                   (reverse-strand equivalent).
-
-        G1333  fwd 4–10 from 5'  |  rev (W-9)–(W-3) from 5'  [≡ 4–10 from 5' reverse]
-        G1397  fwd (W-6)–(W-3)   |  rev 4–7                   [≡ 4–7 from 3' on each strand]
-        """
-        W = window_size
-        if strategy_name == "G1333":
-            return range(4, 11), range(W - 9, W - 2)
-        if strategy_name == "G1397":
-            return range(W - 6, W - 2), range(4, 8)
-        return None, None
-
-    def _get_tcc_extra_bystanders(
-        self, nospace_mtDNA, tc_positions, ga_positions, start_pos, fwd_zone, rev_zone
+    def _process_context_strategy(
+        self,
+        strategy_name: str,
+        nospace_mtDNA,
+        pos,
+        ref_base,
+        mut_base,
+        edit_forward: bool,
     ):
-        """Return extra bystander positions from TCC/GGA consecutive-nucleotide contexts.
-
-        For each TC-context C in fwd_zone: if the next base is also C (5'-TCC), add it.
-        Mirror rule on the reverse strand via GGA (GA-context G in rev_zone with preceding G).
-
-        Returns a list of 1-indexed mtDNA positions to add as bystanders.
-        """
-        extra = []
-
-        # Forward strand: TC-context C in fwd_zone → if next base is C → add second C (TCC)
-        for tc_pos in tc_positions:
-            if tc_pos - start_pos in fwd_zone and tc_pos < len(nospace_mtDNA) and nospace_mtDNA[tc_pos] == "C":
-                extra.append(tc_pos + 1)
-
-        # Reverse strand: GA-context G in rev_zone → if previous base is G → add prev G
-        # (GGA on forward = TCC on reverse strand)
-        for ga_pos in ga_positions:
-            if ga_pos - start_pos in rev_zone and ga_pos >= 2 and nospace_mtDNA[ga_pos - 2] == "G":
-                extra.append(ga_pos - 1)
-
-        return extra
-
-    def _process_context_all_variants(
-        self, nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions, ref_base, mut_base, edit_type
-    ):
-        """Process a context using all three positioning strategies.
-
-        Bystander contexts per strategy:
-          G1397 / G1333 : 5'-TC (C bystanders) and 5'-GA (G bystanders), plus the
-                          second C of any 5'-TCC within the strategy-specific zone
-                          (and the equivalent GGA rule on the reverse strand).
-          DddA11        : 5'-HC where H = A, C, T (i.e. TC/AC/CC for C bystanders,
-                          GA/GT/GG for G bystanders — the complement strand contexts)
-        """
+        """Process a context using a particular positioning strategy."""
         all_windows = []
-
-        # Generate circular sequence for window extraction
         circular_seq = nospace_mtDNA + nospace_mtDNA
 
-        # Calculate adjacent bases (same for all variants)
-        start_index = pos - 31
-        end_index = pos + 30
-        adjacent_bases = circular_seq[start_index:end_index]
+        for window_size in range(self.min_window_size, self.max_window_size + 1):
+            editable_start, editable_end = self._get_position_range(
+                strategy_name, window_size
+            )  # 1-based
+            forward_pos_range = (editable_start - 1, editable_end)  # 0-based, exclusive
+            reverse_pos_range = (
+                window_size - editable_end,
+                window_size - editable_start + 1,
+            )  # 0-based, exclusive
+            for target_pos in (
+                range(*forward_pos_range) if edit_forward else range(*reverse_pos_range)
+            ):
+                start_pos = pos - target_pos - 1
+                end_pos = start_pos + window_size
 
-        strategies = [
-            ("G1397", self._get_g1397_position_range, None),
-            ("G1333", self._get_g1333_position_range, None),
-            ("DddA11", self._get_ddda11_position_range, hc_gh_positions),
-        ]
+                if start_pos < 1 or end_pos > len(nospace_mtDNA):
+                    continue
 
-        for strategy_name, position_range_func, bystander_pool in strategies:
-            for window_size in range(self.min_window_size, self.max_window_size + 1):
-                position_range = position_range_func(window_size)
-                # Compute once per window_size; None for DddA11 (no zone filtering)
-                fwd_zone, rev_zone = self._get_strategy_zones(strategy_name, window_size)
+                window = circular_seq[start_pos:end_pos]
+                # Find bystander positions in this window
+                bystander_positions = []
+                for ctx_pos in self._find_dinucs(
+                    window[forward_pos_range[0] - 1 : forward_pos_range[1]],
+                    self._get_C_context(strategy_name),
+                    "C",
+                    2,
+                    True,
+                    start_pos + forward_pos_range[0] - 1,
+                ) + self._find_dinucs(
+                    window[reverse_pos_range[0] : reverse_pos_range[1] + 1],
+                    self._get_G_context(strategy_name),
+                    "G",
+                    1,
+                    True,
+                    start_pos + reverse_pos_range[0],
+                ):
+                    if ctx_pos != pos:
+                        bystander_positions.append(ctx_pos)
+                # Create window data tuple
+                window_data = (
+                    f"{self.pipeline_name}_{strategy_name}",  # Pipeline variant name
+                    pos,  # Target position
+                    ref_base,  # Reference base
+                    mut_base,  # Mutant base
+                    f"{window_size}bp",  # Window size
+                    self._mark_bases(
+                        window,
+                        pos - start_pos,
+                        [(pos - start_pos) for pos in bystander_positions],
+                    ),  # Window sequence
+                    f"Position {target_pos+1}",  # Target position in window
+                    len(bystander_positions),  # Bystander count
+                    bystander_positions,  # Bystander positions
+                    f"{ref_base}→{mut_base} (5'-{nospace_mtDNA[pos-2:pos] if edit_forward else revcomp(nospace_mtDNA[pos-1:pos+1])} context)",  # Edit type description
+                    strategy_name,  # Strategy identifier
+                    None,
+                    None,
+                )
+                all_windows.append(window_data)
 
-                for target_pos in position_range:
-                    start_pos = pos - target_pos
-                    end_pos = start_pos + window_size
-
-                    if start_pos < 1 or end_pos > len(nospace_mtDNA):
-                        continue
-
-                    window = circular_seq[start_pos : end_pos]
-
-                    bystander_positions = []
-                    if fwd_zone is not None:
-                        # G1397/G1333: TC bystanders in fwd_zone, GA bystanders in rev_zone,
-                        # plus the second C of any 5'-TCC (and GGA mirror on reverse strand).
-                        seen = set()
-                        for tc_pos in tc_positions:
-                            if tc_pos - start_pos in fwd_zone and tc_pos != pos:
-                                bystander_positions.append(tc_pos)
-                                seen.add(tc_pos)
-                        for ga_pos in ga_positions:
-                            if ga_pos - start_pos in rev_zone and ga_pos != pos and ga_pos not in seen:
-                                bystander_positions.append(ga_pos)
-                                seen.add(ga_pos)
-                        for p in self._get_tcc_extra_bystanders(
-                            nospace_mtDNA, tc_positions, ga_positions, start_pos, fwd_zone, rev_zone
-                        ):
-                            if p != pos and p not in seen:
-                                bystander_positions.append(p)
-                                seen.add(p)
-                    else:
-                        # DddA11: accept any context position within the window
-                        for ctx_pos in bystander_pool:
-                            if start_pos < ctx_pos <= start_pos + window_size and ctx_pos != pos:
-                                bystander_positions.append(ctx_pos)
-
-                    # target_pos is 0-based index in window; _mark_bases expects 1-based,
-                    # and subtracts 1 internally — so pass target_pos directly.
-                    # Bystander 1-based index in window = bystander_mtdna_pos - start_pos.
-                    window_data = (
-                        f"{self.pipeline_name}_{strategy_name}",  # Pipeline variant name
-                        pos,  # Target position
-                        ref_base,  # Reference base
-                        mut_base,  # Mutant base
-                        f"{window_size}bp",  # Window size
-                        self._mark_bases(
-                            window,
-                            target_pos,
-                            [(p - start_pos) for p in bystander_positions],
-                        ),  # Window sequence
-                        f"Position {target_pos}",  # Target position in window
-                        len(bystander_positions),  # Bystander count
-                        bystander_positions,  # Bystander positions
-                        edit_type,  # Edit type description
-                        strategy_name,  # Strategy identifier
-                    )
-
-                    all_windows.append(window_data)
-
-        return all_windows, adjacent_bases
+        return all_windows
 
     def process_mtDNA(self, mtDNA_seq, pos):
         """Main function which processes the DNA using all Mok2020 variants."""
@@ -196,98 +161,38 @@ class Mok2020UnifiedPipeline(BasePipeline):
 
         nospace_mtDNA = self._capitalize(self._remove_whitespace(mtDNA_seq))
 
-        # Find all context positions (from all variants)
-        C_CONTEXT = ["TC", "AC", "CC"]
-        G_CONTEXT = ["GA", "GT", "GG"]
+        # Calculate adjacent bases (same for all variants)
+        start_index = pos - 31
+        end_index = pos + 30
+        circular_seq = nospace_mtDNA + nospace_mtDNA
+        adjacent_bases = circular_seq[start_index:end_index]
 
-        C_context_positions = self._find_dinucs(nospace_mtDNA, C_CONTEXT, "C", 2)
-        G_context_positions = self._find_dinucs(nospace_mtDNA, G_CONTEXT, "G", 1)
-        logger.info(f"C_context_positions:{C_context_positions}")
-        logger.info(f"G_context_positions:{G_context_positions}")
-
-        # G1397/G1333: 5'-TC context only (C bystanders) and 5'-GA (G bystanders)
-        tc_positions = self._find_dinucs(nospace_mtDNA, ["TC"], "C", 2)
-        ga_positions = self._find_dinucs(nospace_mtDNA, ["GA"], "G", 1)
-
-        # DddA11: 5'-HC (H = A, C, T) → TC/AC/CC for C; GA/GT/GG for G
-        hc_gh_positions = C_context_positions + G_context_positions
-
-        if pos in C_context_positions:
-            logger.info(
-                f"Base at position {pos} is in a 5'-{nospace_mtDNA[pos-1:pos+1]} context."
+        all_windows = []
+        for strategy_name in STRATEGIES:
+            if nospace_mtDNA[pos - 2 : pos] in self._get_C_context(strategy_name):
+                edit_forward = True
+                logger.info(
+                    f"Base at position {pos} is in a 5'-{nospace_mtDNA[pos-2:pos]} context."
+                )
+            elif nospace_mtDNA[pos - 1 : pos + 1] in self._get_G_context(strategy_name):
+                edit_forward = False
+                logger.info(
+                    f"Base at position {pos} is in a 5'-{revcomp(nospace_mtDNA[pos-1:pos+1])} context."
+                )
+            else:
+                continue
+            all_windows.extend(
+                self._process_context_strategy(
+                    strategy_name,
+                    nospace_mtDNA,
+                    pos,
+                    "C" if edit_forward else "G",
+                    "T" if edit_forward else "A",
+                    edit_forward,
+                )
             )
-            return self._process_context_all_variants(
-                nospace_mtDNA,
-                pos,
-                tc_positions,
-                ga_positions,
-                hc_gh_positions,
-                "C",
-                "T",
-                f"C→T (5'-{nospace_mtDNA[pos-1:pos+1]} context)",
-            )
-
-        if pos in G_context_positions:
-            logger.info(
-                f"Base at position {pos} is in a 5'-{nospace_mtDNA[pos-1:pos+1]} context."
-            )
-            return self._process_context_all_variants(
-                nospace_mtDNA,
-                pos,
-                tc_positions,
-                ga_positions,
-                hc_gh_positions,
-                "G",
-                "A",
-                f"G��A (5'-{nospace_mtDNA[pos-1:pos+1]} context)",
-            )
-
-        consecutive_TC_positions = self._find_consecutive_TC_sequences(nospace_mtDNA)
-        consecutive_AC_positions = self._find_consecutive_AC_sequences(nospace_mtDNA)
-        consecutive_CC_positions = self._find_consecutive_CC_sequences(nospace_mtDNA)
-        consecutive_GA_positions = self._find_consecutive_GA_sequences(nospace_mtDNA)
-        consecutive_GT_positions = self._find_consecutive_GT_sequences(nospace_mtDNA)
-        consecutive_GG_positions = self._find_consecutive_GG_sequences(nospace_mtDNA)
-
-        # Check which context the position belongs to and process with all variants
-        if pos in consecutive_TC_positions:
-            logger.info(f"Base at position {pos} is in a 5'-TC context.")
-            return self._process_context_all_variants(
-                nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions,
-                "C", "T", "C→T (TC context)",
-            )
-        elif pos in consecutive_AC_positions:
-            logger.info(f"Base at position {pos} is in a 5'-AC context.")
-            return self._process_context_all_variants(
-                nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions,
-                "C", "T", "C→T (AC context)",
-            )
-        elif pos in consecutive_CC_positions:
-            logger.info(f"Base at position {pos} is in a 5'-CC context.")
-            return self._process_context_all_variants(
-                nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions,
-                "C", "T", "C→T (CC context)",
-            )
-        elif pos in consecutive_GA_positions:
-            logger.info(f"Base at position {pos} is in a 5'-GA context.")
-            return self._process_context_all_variants(
-                nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions,
-                "G", "A", "G→A (GA context)",
-            )
-        elif pos in consecutive_GT_positions:
-            logger.info(f"Base at position {pos} is in a 5'-GT context.")
-            return self._process_context_all_variants(
-                nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions,
-                "G", "A", "G→A (GT context)",
-            )
-        elif pos in consecutive_GG_positions:
-            logger.info(f"Base at position {pos} is in a 5'-GG context.")
-            return self._process_context_all_variants(
-                nospace_mtDNA, pos, tc_positions, ga_positions, hc_gh_positions,
-                "G", "A", "G→A (GG context)",
-            )
-        else:
+        if len(all_windows) == 0:
             logger.warning(
                 f"Base at position {pos} is not in any editable context for Mok2020 pipelines."
             )
-            return [], []
+        return all_windows, adjacent_bases
