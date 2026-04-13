@@ -29,7 +29,8 @@ keywords = ["bioinformatics", "mitochondrial", "dna", "base editing", "crispr", 
 dependencies = [
     "pandas>=2.0.0",
     "talenWF>=0.1.2",
-    "xlsxwriter"
+    "xlsxwriter",
+    "biopython>=1.79",
 ]
 
 [project.optional-dependencies]
@@ -64,7 +65,8 @@ mitoedit = [
     "pipelines/*.py",
     "talent_tools/*.py", "talent_tools/re_dict_dump", "talent_tools/sequence_versions_dump",
     "web/templates/*.html", "web/static/*",
-    "resources/*.txt"
+    "resources/*.txt",
+    "resources/*.xlsx"
 ]
 
 [tool.yapf]

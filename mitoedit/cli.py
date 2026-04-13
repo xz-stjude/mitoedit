@@ -6,6 +6,7 @@ import pandas as pd
 
 from . import process_mitoedit
 from . import MIN_SPACER, MAX_SPACER, ARR_MIN, ARR_MAX
+from .io import read_sequence_file
 import logging
 import sys
 
@@ -23,7 +24,8 @@ def main():
         description="Process DNA sequence for base editing."
     )
     # yapf: disable
-    parser.add_argument('--mtdna_seq_path', '-i', type=str, default=None,       help='File containing the mtDNA sequence as plain text.')
+    parser.add_argument('--mtdna_seq_path', '-i', type=str, default=None,       help='File containing the mtDNA sequence. Use .txt for plain text (no header) or .fasta/.fa for FASTA format (header line starting with ">" will be ignored).')
+    parser.add_argument('--reference_base', '-r', type=str, default=None,      help='Expected reference base at the given position (optional). Used to cross-check the entered position against the sequence; raises an error if the base in the sequence does not match.')
     parser.add_argument('--bystander_file'      , type=str,                     help='Excel file containing bystander effect annotations (optional, for human mtDNA analysis)')
     parser.add_argument('--output_prefix', '-o' , type=str, default='output',   help='Prefix for output CSV files (default: output)')
     parser.add_argument('--min_spacer'          , type=int, default=MIN_SPACER, help=f'Minimum spacer length for TALE-NT (default: {MIN_SPACER})')
@@ -50,8 +52,7 @@ def main():
             raise
     else:
         logger.info(f"Reading mtDNA sequence from file: {args.mtdna_seq_path}")
-        with open(args.mtdna_seq_path, "r") as fh:
-            mtdna_seq = fh.read().replace("\n", "")
+        mtdna_seq = read_sequence_file(args.mtdna_seq_path)
 
     bystander_df = None
     if args.bystander_file:
@@ -75,6 +76,7 @@ def main():
         mtdna_seq=mtdna_seq,
         position=args.position,
         mutant_base=args.mutant_base,
+        reference_base=args.reference_base,
         bystander_df=bystander_df,
         talen_params=talen_params,
     )

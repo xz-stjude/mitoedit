@@ -33,6 +33,7 @@ running/
 
 # Output directories
 final_output/
+tests/output/
 
 # Temporary files
 .tmp/
