@@ -39,6 +39,7 @@ def main():
     parser.add_argument('position'              , type=int,                     help='Position of the base to be changed')
     parser.add_argument('mutant_base'           , type=str,                     help='Mutant base to be changed into')
     parser.add_argument('--write_excel'           , action="store_true",          help='Save windows and bystander effects in spreadsheeets of an excel file (final_{position}_{mutant base})')
+    parser.add_argument('--reference_base'        , type=str, default=None,       help='Expected reference base at the target position (optional). Used only to double-check the sequence — raises an error if the base in the sequence does not match.')
     # yapf: enable
     args = parser.parse_args()
 
@@ -58,20 +59,16 @@ def main():
         logger.info(f"Reading mtDNA sequence from file: {args.mtdna_seq_path}")
         mtdna_seq = read_sequence_file(args.mtdna_seq_path)
 
-    bystander_df = None
-    logger.info(f"Reading Bystander information from file: {args.bystander_file}")
+    ref_annot_df = None
     if args.bystander_file:
         bystander_file = os.path.abspath(args.bystander_file)
         if os.path.isfile(bystander_file):
-            logger.info(f"Loading bystander data from {bystander_file}")
-            bystander_df = pd.read_excel(bystander_file)
+            logger.info(f"Loading bystander annotation from {bystander_file}")
+            ref_annot_df = pd.read_excel(bystander_file)
+            logger.info(f"Loaded bystander annotation: {len(ref_annot_df)} rows.")
         else:
             logger.warning(
                 f"Bystander file {bystander_file} does not exist. Skipping bystander information."
-            )
-        if bystander_df is not None and len(bystander_df):
-            logger.info(
-                f"Successfully got Bystander information for {len(bystander_df)} mutations."
             )
 
     talen_params = {
@@ -86,7 +83,7 @@ def main():
         position=args.position,
         mutant_base=args.mutant_base,
         reference_base=args.reference_base,
-        bystander_df=bystander_df,
+        ref_annot_df=ref_annot_df,
         talen_params=talen_params,
     )
 

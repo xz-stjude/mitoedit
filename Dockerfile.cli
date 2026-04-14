@@ -1,0 +1,16 @@
+FROM continuumio/miniconda3:latest
+
+WORKDIR /app
+
+# Create conda environment (includes talenWF as pip dep)
+COPY conda_env.yaml .
+RUN conda env create -f conda_env.yaml && conda clean --all --yes
+
+# Copy source and install the mitoedit package (registers the CLI)
+COPY . .
+RUN conda run -n mitoedit pip install --no-deps .
+
+# Put the conda env on PATH so `mitoedit` is directly callable
+ENV PATH=/opt/conda/envs/mitoedit/bin:$PATH
+
+ENTRYPOINT ["mitoedit"]

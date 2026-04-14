@@ -3,6 +3,8 @@ import os
 import re
 import tempfile
 from importlib.resources import files
+from pathlib import Path
+from types import NoneType
 
 import pandas as pd
 
@@ -50,7 +52,7 @@ def process_mitoedit(
     mutant_base,
     mtdna_seq=None,
     reference_base=None,
-    bystander_df=None,
+    ref_annot_df=None,
     talen_params={
         "min_spacer": MIN_SPACER,
         "max_spacer": MAX_SPACER,
@@ -65,7 +67,7 @@ def process_mitoedit(
         mtdna_seq (str): mtDNA sequence string
         position (int): Position of the base to be changed (1-based)
         mutant_base (str): Mutant base to be changed into
-        bystander_df (pd.DataFrame, optional): DataFrame containing bystander effect annotations
+        ref_annot_df (pd.DataFrame, optional): Reference annotation DataFrame for bystander effect lookup (human mtDNA annotation). Auto-loaded from bundled resources when a custom sequence is provided.
         talen_params (dict, optional): TALE-NT parameters for findTAL analysis
 
     Returns:
@@ -86,18 +88,15 @@ def process_mitoedit(
             logger.error("Default mtDNA sequence file not found in resources/mito.txt")
             raise
 
-    if is_custom_sequence and bystander_df is None:
+    if is_custom_sequence and ref_annot_df is None:
         try:
-            _xlsx = (
-                files("mitoedit.resources")
-                .joinpath("annotated_human_mtDNA_10022024_for_bystanders_EDITED.xlsx")
-                .read_bytes()
-            )
-            bystander_df = pd.read_excel(io.BytesIO(_xlsx))
-            logger.info("Auto-loaded bundled bystander annotation: %d rows.", len(bystander_df))
+            with files("mitoedit.resources").joinpath(
+                "annotated_human_mtDNA_10022024_for_bystanders_EDITED.xlsx"
+            ).open("rb") as fh:
+                ref_annot_df = pd.read_excel(fh)
+            logger.info("Auto-loaded bundled bystander annotation: %d rows.", len(ref_annot_df))
         except Exception as exc:
             logger.warning("Could not auto-load bundled bystander annotation: %s", exc)
-
     mutant_base = mutant_base.upper()
 
     reference_base_in_seq = mtdna_seq[position - 1].upper()
@@ -181,14 +180,14 @@ def process_mitoedit(
             lambda row: window_has_indels(row, custom_to_ref), axis=1
         )
         # Look up bystander effects using reference positions
-        if bystander_df is not None and not bystander_df.empty:
+        if ref_annot_df is not None and not ref_annot_df.empty:
             ref_positions = {
                 rp
                 for lst in windows_df["Reference Position of Bystanders"]
                 for rp in lst
                 if rp is not None
             }
-            filtered = bystander_df[bystander_df["mtDNA_pos"].isin(ref_positions)].copy()
+            filtered = ref_annot_df[ref_annot_df["mtDNA_pos"].isin(ref_positions)].copy()
             bystanders_df = filtered[
                 [
                     "mtDNA_pos", "Ref. Allele", "Mutant Allele", "Location",
@@ -214,7 +213,7 @@ def process_mitoedit(
     else:
         # Original reference-sequence path — untouched
         windows_df, bystanders_df = pipeline_instance.process_bystander_data(
-            windows_df, bystander_df
+            windows_df, ref_annot_df
         )
 
     logger.info("Pipeline processing completed successfully.")
