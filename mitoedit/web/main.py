@@ -260,6 +260,8 @@ async def analyze_sequence(
                     str(position),
                     mutant_base.upper(),
                 ]
+            if reference_base:
+                args += ["--reference_base", reference_base.upper()]
             logger.info(f"Running mitoedit with args: {args}")
             sys.argv = args
             mitoedit.main()

@@ -43,7 +43,7 @@
                         
                         <ol>
                             <li><strong>Enter Position:</strong> Specify the 1-based position of the base you want to target in your DNA sequence.</li>
-                            <li><strong>Select Reference Base:</strong> Choose the original base (A, T, C, or G) at the specified position.</li>
+                            <li><strong>Select Reference Base (Optional):</strong> Optionally select the base you expect at the specified position. This is a sanity-check only — MitoEdit will raise an error if the sequence base does not match. Leave blank to skip the check.</li>
                             <li><strong>Select Mutant Base:</strong> Choose the desired base conversion (A, T, C, or G).</li>
                             <li><strong>Upload DNA Sequence (Optional):</strong> You can upload your own DNA sequence file (.txt or .fasta format). If not provided, the human mitochondrial DNA sequence will be used by default.</li>
                             <li><strong>Analyze Sequence:</strong> Click the "Analyze Sequence" button to start the analysis.</li>
@@ -339,15 +339,17 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="reference_base" class="form-label">Reference Base</label>
-                        <select class="form-control" id="reference_base" name="reference_base" required>
-                            <option value="">Select base</option>
+                        <label for="reference_base" class="form-label">Reference Base (Optional)</label>
+                        <select class="form-control" id="reference_base" name="reference_base">
+                            <option value="">Select base (optional)</option>
                             <option value="A">A</option>
                             <option value="T">T</option>
                             <option value="C">C</option>
                             <option value="G">G</option>
                         </select>
-                        <div class="form-text">Select the original base at the specified position</div>
+                        <div class="form-text">
+                            For double-checking only: if provided, MitoEdit will verify that the base at the given position in the sequence matches this value and raise an error if it does not. Leave blank to skip this check.
+                        </div>
                     </div>
 
                     <div class="mb-3">

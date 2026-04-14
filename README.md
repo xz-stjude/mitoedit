@@ -311,6 +311,9 @@ MitoEdit requires the following parameters:
 - If not provided, MitoEdit will use the [human mtDNA sequence](https://www.ncbi.nlm.nih.gov/nuccore/251831106) from NCBI by default.
 - The web interface accepts the same file formats via the sequence upload field.
 
+#### Reference Base Check:
+- `--reference_base`: Expected base at the target position (A, T, C, or G). **For double-checking only** — if provided, MitoEdit verifies that the base in the sequence at `position` matches this value and raises a `ReferenceBaseError` if it does not. Leave unset to skip the check.
+
 #### Bystander Analysis:
 - `--bystander_file`: Excel file containing bystander effect annotations (optional, for human mtDNA analysis).
 
